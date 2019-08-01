@@ -22,6 +22,7 @@ from onnx import helper, checker, load
 import fluid_onnx.ops as ops
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor
 from fluid_onnx.variables import PADDLE_TO_ONNX_DTYPE
+from image_reader import ImageBaseReader 
 
 
 def parse_args():
@@ -60,6 +61,19 @@ def parse_args():
         choices=['caffe2', 'tensorrt'],
         default='caffe2',
         help="The ONNX backend used for validation. (default: %(default)s)")
+    parser.add_argument(
+        "--use_data_reader",
+        type=bool,
+        action='store_true',
+        default=False,
+        help="Use the real image or nlp data to valid model,(default: %(default)b)"
+        )
+    parser.add_argument(
+        "--image_path",
+        type=str,
+        default="",
+        help="The image path to read"
+        )
     args = parser.parse_args()
     return args
 
@@ -70,14 +84,7 @@ def print_arguments(args):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
 
-
-def validate(args):
-    place = fluid.CPUPlace()
-    exe = fluid.Executor(place)
-
-    [fluid_infer_program, feed_target_names,
-     fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
-
+def random_reader(program, args):
     input_shapes = [
         fluid_infer_program.global_block().var(var_name).shape
         for var_name in feed_target_names
@@ -86,22 +93,23 @@ def validate(args):
         shape if shape[0] > 0 else (args.batch_size, ) + shape[1:]
         for shape in input_shapes
     ]
+    for i in range(10):
+        # Generate dummy data as inputs
+        inputs = [
+            (args.b - args.a) * np.random.random(shape).astype("float32") + args.a
+            for shape in input_shapes
+        ]
+        yield inputs
+        
+       
 
-    # Generate dummy data as inputs
-    inputs = [
-        (args.b - args.a) * np.random.random(shape).astype("float32") + args.a
-        for shape in input_shapes
-    ]
+def validate(args):
+    place = fluid.CPUPlace()
+    exe = fluid.Executor(place)
 
-    # Fluid inference 
-    fluid_results = exe.run(fluid_infer_program,
-                            feed=dict(zip(feed_target_names, inputs)),
-                            fetch_list=fetch_targets)
-
-    # Remove these prints some day
-    print("Inference results for fluid model:")
-    print(fluid_results)
-    print('\n')
+    # load the paddle and onnx model 
+    [fluid_infer_program, feed_target_names,
+     fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
 
     # ONNX inference, using caffe2 as the backend
     onnx_model = load(args.onnx_model)
@@ -111,16 +119,53 @@ def validate(args):
     else:
         import onnx_tensorrt.backend as backend
         rep = backend.prepare(onnx_model, device='CUDA:0')
-    onnx_results = rep.run(inputs)
+    # select the random data reader or use define reader
+    if args.use_data_reader:
+        reader = random_reader
+    else:
+        if image_path:
+           data_dict = dict()
+           data_dict["image"] = args.image_path 
+           ImageBaseReader image_reader(input_data_dict=data_dict) 
+           reader = image_reader.preprocess 
+        else:
+           raise Exception, "image path is not set."
+    fluid_results_all = []
+    onnx_results_all = []
+    for inputs in reader():
+        # Fluid inference 
+        fluid_results = exe.run(fluid_infer_program,
+                                feed=dict(zip(feed_target_names, inputs)),
+                                fetch_list=fetch_targets)
+        fluid_results_all.append(fluid_results)
+
+        #ONNX inference
+        onnx_results = rep.run(inputs)
+        onnx_results_all.append(onnx_results)
+
+
+    # Remove these prints some day
+    print("Inference results for fluid model:")
+    print(fluid_results)
+    print('\n')
+
 
     print("Inference results for ONNX model:")
     print(onnx_results)
     print('\n')
+    
+    #check result diff in paddle and onnx model
+    batch_id = 0
+    for fluid_results, onnx_results in zip(fluid_results_all, onnx_results_all): 
+        print("The btach id is %d"%(batch_id))
+        batch_inner_id = 0
+        for ref, hyp in zip(fluid_results, onnx_results):
+             print("The inner id is %d"%(batch_inner_id))
+            np.testing.assert_almost_equal(ref, hyp, decimal=args.expected_decimal)
+        batch_id += 1
 
-    for ref, hyp in zip(fluid_results, onnx_results):
-        np.testing.assert_almost_equal(ref, hyp, decimal=args.expected_decimal)
     print("The exported model achieves {}-decimal precision.".format(
-        args.expected_decimal))
+                args.expected_decimal))
 
 
 if __name__ == "__main__":

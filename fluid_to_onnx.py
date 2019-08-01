@@ -11,16 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+# -*- coding:utf-8 -*-
 import os
 import argparse
 
-from fluid.utils import op_io_info
+from fluid.utils import op_io_info, init_name_prefix
 from onnx import helper, checker
 import paddle.fluid as fluid
 
 import fluid_onnx.ops as ops
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor, paddle_onnx_weight
+from debug.model_check import debug_model
 
 
 def parse_args():
@@ -31,6 +32,10 @@ def parse_args():
     parser.add_argument(
         "--onnx_model", required=True, help="The path to save ONNX model.")
     parser.add_argument(
+        "--name_prefix", type=str, default="", help="The prefix of Var name")
+    parser.add_argument(
+        "--debug", action="store_true", default=False, help="The prefix of Var name")
+    parser.add_argument(
         "--to_print_model",
         action='store_true',
         help="To print converted ONNX model.")
@@ -40,7 +45,7 @@ def parse_args():
 
 def print_arguments(args):
     print('-----------  Configuration Arguments -----------')
-    for arg, value in sorted(vars(args).iteritems()):
+    for arg, value in sorted(vars(args).items()):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
 
@@ -56,13 +61,19 @@ def convert(args):
         # Load inference program and other target attributes
         [inference_program, feed_target_names,
          fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
+        fetch_targets_names = [ data.name for data in fetch_targets]
+
+        feed_fetch_list = ["fetch", "feed"]
+        if args.name_prefix:
+            feed_fetch_list = [ args.name_prefix + name for name in feed_fetch_list]
 
         # Load parameters
         weights, weights_value_info = [], []
         global_block = inference_program.global_block()
         for var_name in global_block.vars:
             var = global_block.var(var_name)
-            if var_name not in ['feed', 'fetch'] and var.persistable:
+            if var_name not in feed_fetch_list\
+                and var.persistable:
                 weight, val_info = paddle_onnx_weight(
                     var=var, scope=inference_scope)
                 weights.append(weight)
@@ -74,20 +85,23 @@ def convert(args):
             for v in feed_target_names
         ]
 
+        print("load the model parameter done.")
         # Create nodes using blocks in inference_program
+        init_name_prefix(args.name_prefix)
         onnx_nodes = []
+        op_check_list = []
         for block in inference_program.blocks:
             for op in block.ops:
                 if op.type in ops.node_maker:
                     # TODO(kuke): deal with the corner case that vars in 
                     #     different blocks have the same name
-                    node_proto = ops.node_maker[op.type](operator=op,
+                    node_proto = ops.node_maker[str(op.type)](operator=op,
                                                          block=block)
-
                     if isinstance(node_proto, tuple):
                         onnx_nodes.extend(list(node_proto))
                     else:
                         onnx_nodes.append(node_proto)
+                    op_check_list.append(str(op.type))
                 else:
                     if op.type not in ['feed', 'fetch']:
                         raise NotImplementedError("OP[%s] is not supported in "
@@ -133,7 +147,20 @@ def convert(args):
                 with open(args.onnx_model, 'wb') as f:
                     f.write(onnx_model.SerializeToString())
                 print("Saved converted model to path: %s" % args.onnx_model)
-            except (IOError), e:
+                # If in debug mode, need to save op list, add we will check op 
+                if args.debug:
+                    op_check_list = list(set(op_check_list))
+                    check_outputs = []
+
+                    for node_proto in onnx_nodes:
+                         check_outputs.extend(node_proto.output)
+                    print("The num of %d operators need to check, and %d op outputs need to check."\
+                          %(len(op_check_list), len(check_outputs)))
+
+                    debug_model(op_check_list, check_outputs)
+                    
+
+            except (IOError,e):
                 print("Invalid ONNX model saving path: %s" % args.onnx_model)
 
 

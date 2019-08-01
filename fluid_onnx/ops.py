@@ -18,7 +18,7 @@ import numpy as np
 from functools import partial
 from onnx import TensorProto
 from onnx.helper import make_node, make_tensor
-from paddle.fluid.executor import fetch_var
+from paddle.fluid.executor import _fetch_var as fetch_var
 from fluid.utils import op_io_info, get_old_name
 from fluid_onnx.variables import PADDLE_TO_ONNX_DTYPE, paddle_onnx_shape
 """
@@ -60,6 +60,10 @@ test_machine_translation.py
 
 __onnx_ver__ = onnx.version.version
 
+__name_prefix__ = ""
+
+def init_name_prefix(name_prefix=""):
+    gloab
 
 def activation_ops(act_type, operator, block):
     """ Convert common activations with type specified by 'act_type', including
@@ -69,7 +73,7 @@ def activation_ops(act_type, operator, block):
 
     inputs, _, outputs = op_io_info(operator)
     return make_node(
-        act_type, inputs=inputs.values()[0], outputs=outputs.values()[0])
+        act_type, inputs=list(inputs.values())[0], outputs=list(outputs.values())[0])
 
 
 def argmax_op():
@@ -117,7 +121,6 @@ def batch_norm_op(operator, block):
         reshaped_x = inputs['X']
 
     kwargs = {
-        'is_test': attrs['is_test'],
         'epsilon': attrs['epsilon'],
         'momentum': attrs['momentum']
     }
@@ -267,15 +270,13 @@ def elementwise_ops(op_type, operator, block):
     """
 
     inputs, attrs, outputs = op_io_info(operator)
-    rank_x = len(block.vars[get_old_name(inputs['X'][0])].shape)
-    rank_y = len(block.vars[get_old_name(inputs['Y'][0])].shape)
-    axis = rank_x - rank_y if attrs['axis'] == -1 else attrs['axis']
+    #rank_x = len(block.vars[get_old_name(inputs['X'][0])].shape)
+    #rank_y = len(block.vars[get_old_name(inputs['Y'][0])].shape)
+    #axis = rank_x - rank_y if attrs['axis'] == -1 else attrs['axis']
     return make_node(
         op_type,
         inputs=inputs['X'] + inputs['Y'],
-        outputs=outputs['Out'],
-        axis=axis,
-        broadcast=1)
+        outputs=outputs['Out'])
 
 
 def elu_op(operator, block):
@@ -663,6 +664,65 @@ def thresholded_relu_op(operator, block):
         outputs=outputs['Out'],
         alpha=attrs['threshold'])
 
+def scale_op(operator, block):
+    inputs, attrs, outputs = op_io_info(operator)
+    print(inputs)
+    print(outputs)
+    scale_var_name = [outputs['Out'][0] + "@scale"]
+    node_scale = onnx.helper.make_node(
+        'Constant',
+        inputs=[],
+        outputs=scale_var_name,
+        value=onnx.helper.make_tensor(
+             name=scale_var_name[0]+"@const",
+             data_type=onnx.TensorProto.FLOAT,
+             dims=(),
+             vals=[attrs['scale']]))
+    bais_var_name = [outputs['Out'][0] + "@bais"]
+    bais = 0.0
+    if 'bais' in attrs:
+       bais = float(attrs['bais'])
+    node_bais = onnx.helper.make_node(
+        'Constant',
+        inputs=[],
+        outputs=bais_var_name,
+        value=onnx.helper.make_tensor(
+             name=bais_var_name[0]+"@const",
+             data_type=onnx.TensorProto.FLOAT,
+             dims=(),
+             vals=[bais]))
+    paddle_var = block.var(inputs["X"][0])
+    tmp_var_name = outputs['Out'][0] + "@tmp"
+    shape =  paddle_onnx_shape(paddle_var.shape)
+    tmp_var = onnx.helper.make_tensor_value_info(tmp_var_name, PADDLE_TO_ONNX_DTYPE[paddle_var.dtype], shape)
+    print(tmp_var)
+    nodes = (node_scale, node_bais)
+    if attrs['bias_after_scale'] == True:
+        node_output_mul = onnx.helper.make_node(
+            'Mul',
+            inputs=[scale_var_name[0], inputs["X"][0]],
+                    outputs=[tmp_var_name])
+        node_output_scale = onnx.helper.make_node(
+             'Add',
+             inputs=[bais_var_name[0], tmp_var_name],
+             outputs=outputs["Out"])
+        nodes += (node_output_mul, node_output_scale)
+    else:
+        node_output_add = onnx.helper.make_node(
+             'Add',
+             inputs=[bais_var_name[0], inputs["X"][0]],
+             outputs=[tmp_var_name])
+        node_output_mul = onnx.helper.make_node(
+            'Mul',
+            inputs=[scale_var_name[0], tmp_var_name],
+                    outputs=outputs["Out"])
+        nodes += (node_output_add, node_output_mul)
+
+    return nodes
+       
+       
+    
+       
 
 # Based on the ONNX 1.0 operator list generated on March 26th, 2018.
 # Reference for paddle operator availability taken from:
@@ -781,5 +841,6 @@ node_maker = {
     # 'experimental Scale'
     # 'experimental ScaledTanh'
     'thresholded_relu': thresholded_relu_op,
+    'scale': scale_op
     # 'experimental Upsample'
 }

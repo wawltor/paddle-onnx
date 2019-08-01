@@ -15,6 +15,7 @@
 import sys
 import unittest
 import numpy as np
+import  op_test_onnx
 
 from onnx.helper import make_node, make_graph, make_model
 from onnx.checker import check_node
@@ -24,10 +25,10 @@ from paddle.fluid.backward import append_backward
 from paddle.fluid.op import Operator
 from paddle.fluid.executor import Executor
 from paddle.fluid.framework import Program, OpProtoHolder
-from caffe2.python.onnx.backend import Caffe2Backend
-
+sys.path.append("..")
 from fluid_onnx.ops import node_maker
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor
+
 """
 NOTE (varunarora): Some of the code snippets below have been inspired from
 op_test.py in /python/paddle/fluid/tests/unittests/ in the original
@@ -220,7 +221,7 @@ class OpTest(unittest.TestCase):
 
             # Construct a unique list of outputs to fetch.
             self.fetch_list = []
-            for var_name, var in outputs.iteritems():
+            for var_name, var in outputs.items():
                 if var_name in self.outputs and var_name not in ignored_outputs:
                     if isinstance(var, list):
                         for v in var:
@@ -243,7 +244,6 @@ class OpTest(unittest.TestCase):
         ONNX ops and prepare the inputs and output values based on ONNX
         compatibility.
         """
-
         # Convert inputs and outputs to ONNX tensors.
         # Use the Paddle fetch_list to prepare the outputs.
         inputs = [
@@ -277,9 +277,9 @@ class OpTest(unittest.TestCase):
                 input_map[v] = self.inputs[v]
 
         # Run the Caffe2Backend with the ONNX model.
-        rep = Caffe2Backend.prepare(onnx_model, device='CPU')
-        in_vals = [input_map[input.name] for input in inputs]
-        outs = rep.run(in_vals)
+        #rep = Caffe2Backend.prepare(onnx_model, device='CPU')
+        #in_vals = [input_map[input.name] for input in inputs]
+        #outs = rep.run(in_vals)
 
         return outs
 
