@@ -28,7 +28,7 @@ class TestConv2dOp(OpTest):
         self.pad = [0, 0]
         self.stride = [1, 1]
         self.input_size = [2, 3, 5, 5]
-        f_c = self.input_size[1] / self.groups
+        f_c = int(self.input_size[1] / self.groups)
         self.filter_size = [6, f_c, 3, 3]
 
         conv2d_param = {
@@ -37,6 +37,7 @@ class TestConv2dOp(OpTest):
             'dilation': self.dilations
         }
 
+        print(np.random.random(self.input_size))
         input = np.random.random(self.input_size).astype(self.dtype)
         filter = np.random.random(self.filter_size).astype(self.dtype)
 

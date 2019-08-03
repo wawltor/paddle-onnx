@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from caffe2.python.onnx.backend import Caffe2Backend
 import sys
 import unittest
 import numpy as np
-import  op_test_onnx
 
 from onnx.helper import make_node, make_graph, make_model
 from onnx.checker import check_node
@@ -25,8 +25,8 @@ from paddle.fluid.backward import append_backward
 from paddle.fluid.op import Operator
 from paddle.fluid.executor import Executor
 from paddle.fluid.framework import Program, OpProtoHolder
-sys.path.append("..")
-from fluid_onnx.ops import node_maker
+
+import fluid_onnx.ops as ops
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor
 
 """
@@ -259,7 +259,7 @@ class OpTest(unittest.TestCase):
         ]
 
         # Construct the ONNX model using paddle-onnx.
-        onnx_node = node_maker[self.op_type](operator=self.op, block=self.block)
+        onnx_node = ops.node_maker[self.op_type](operator=self.op, block=self.block)
         node_list = list(onnx_node) if isinstance(onnx_node,
                                                   tuple) else [onnx_node]
         for node in node_list:
@@ -277,9 +277,9 @@ class OpTest(unittest.TestCase):
                 input_map[v] = self.inputs[v]
 
         # Run the Caffe2Backend with the ONNX model.
-        #rep = Caffe2Backend.prepare(onnx_model, device='CPU')
-        #in_vals = [input_map[input.name] for input in inputs]
-        #outs = rep.run(in_vals)
+        rep = Caffe2Backend.prepare(onnx_model, device='CPU')
+        in_vals = [input_map[input.name] for input in inputs]
+        outs = rep.run(in_vals)
 
         return outs
 

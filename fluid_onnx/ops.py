@@ -666,8 +666,6 @@ def thresholded_relu_op(operator, block):
 
 def scale_op(operator, block):
     inputs, attrs, outputs = op_io_info(operator)
-    print(inputs)
-    print(outputs)
     scale_var_name = [outputs['Out'][0] + "@scale"]
     node_scale = onnx.helper.make_node(
         'Constant',
@@ -695,7 +693,6 @@ def scale_op(operator, block):
     tmp_var_name = outputs['Out'][0] + "@tmp"
     shape =  paddle_onnx_shape(paddle_var.shape)
     tmp_var = onnx.helper.make_tensor_value_info(tmp_var_name, PADDLE_TO_ONNX_DTYPE[paddle_var.dtype], shape)
-    print(tmp_var)
     nodes = (node_scale, node_bais)
     if attrs['bias_after_scale'] == True:
         node_output_mul = onnx.helper.make_node(

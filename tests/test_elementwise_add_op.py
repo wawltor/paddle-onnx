@@ -41,26 +41,5 @@ class TestElementwiseAddOpNegAxis(OpTest):
         self.op_type = 'elementwise_add'
         self.attrs = {'axis': -1}
 
-
-class TestElementwiseSubOp(TestElementwiseAddOp):
-    def init(self):
-        self.op_type = 'elementwise_sub'
-
-
-class TestElementwiseMulOp(TestElementwiseAddOp):
-    def init(self):
-        self.op_type = 'elementwise_mul'
-
-
-class TestElementwiseDivOp(TestElementwiseAddOp):
-    def init(self):
-        self.op_type = 'elementwise_div'
-
-
-class TestElementwisePowOp(TestElementwiseAddOp):
-    def init(self):
-        self.op_type = 'elementwise_pow'
-
-
 if __name__ == '__main__':
     unittest.main()
