@@ -37,7 +37,6 @@ class TestConv2dOp(OpTest):
             'dilation': self.dilations
         }
 
-        print(np.random.random(self.input_size))
         input = np.random.random(self.input_size).astype(self.dtype)
         filter = np.random.random(self.filter_size).astype(self.dtype)
 

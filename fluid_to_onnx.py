@@ -21,7 +21,7 @@ import paddle.fluid as fluid
 
 import fluid_onnx.ops as ops
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor, paddle_onnx_weight
-from debug.model_check import debug_model
+from debug.model_check import debug_model, Tracker
 
 
 def parse_args():
@@ -32,9 +32,11 @@ def parse_args():
     parser.add_argument(
         "--onnx_model", required=True, help="The path to save ONNX model.")
     parser.add_argument(
-        "--name_prefix", type=str, default="", help="The prefix of Var name")
+        "--name_prefix", type=str, default="", help="The prefix of Var name.")
     parser.add_argument(
-        "--debug", action="store_true", default=False, help="The prefix of Var name")
+        "--debug", action="store_true", default=False, help="Use the debug mode to validate the onnx model.")
+    parser.add_argument(
+        "--image_path", type=str, default="", help="The image path to validate.")
     parser.add_argument(
         "--to_print_model",
         action='store_true',
@@ -90,6 +92,7 @@ def convert(args):
         init_name_prefix(args.name_prefix)
         onnx_nodes = []
         op_check_list = []
+        op_trackers = []
         for block in inference_program.blocks:
             for op in block.ops:
                 if op.type in ops.node_maker:
@@ -97,16 +100,21 @@ def convert(args):
                     #     different blocks have the same name
                     node_proto = ops.node_maker[str(op.type)](operator=op,
                                                          block=block)
+                    op_outputs = []
+                    last_node = None 
                     if isinstance(node_proto, tuple):
                         onnx_nodes.extend(list(node_proto))
+                        last_node = list(node_proto)
                     else:
                         onnx_nodes.append(node_proto)
+                        last_node = [node_proto]
+                    tracker = Tracker(str(op.type), last_node)
+                    op_trackers.append(tracker)
                     op_check_list.append(str(op.type))
                 else:
                     if op.type not in ['feed', 'fetch']:
                         raise NotImplementedError("OP[%s] is not supported in "
                                                   "the converter!" % op.type)
-
         # Create outputs
         fetch_target_names = [
             fetch_target.name for fetch_target in fetch_targets
@@ -154,10 +162,11 @@ def convert(args):
 
                     for node_proto in onnx_nodes:
                          check_outputs.extend(node_proto.output)
+
                     print("The num of %d operators need to check, and %d op outputs need to check."\
                           %(len(op_check_list), len(check_outputs)))
 
-                    debug_model(op_check_list, check_outputs)
+                    debug_model(op_check_list, op_trackers, args)
                     
 
             except (IOError,e):
@@ -165,6 +174,7 @@ def convert(args):
 
 
 if __name__ == "__main__":
+    print("step in")
     args = parse_args()
     print_arguments(args)
     convert(args)

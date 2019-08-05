@@ -56,9 +56,6 @@ class ImageBaseReader():
         img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
         img -= img_mean
         img /= img_std
-        print(img.shape)
-        print(img)
-
         return img
 
     def preprocess(self):

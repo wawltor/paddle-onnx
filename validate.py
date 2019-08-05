@@ -84,19 +84,21 @@ def print_arguments(args):
         print('%s: %s' % (arg, value))
     print('------------------------------------------------')
 
-def random_reader(program, args):
+def random_reader(program, feed_target_names):
+    a = 0.0
+    b = 1.0
     input_shapes = [
-        fluid_infer_program.global_block().var(var_name).shape
+        program.global_block().var(var_name).shape
         for var_name in feed_target_names
     ]
     input_shapes = [
-        shape if shape[0] > 0 else (args.batch_size, ) + shape[1:]
+        shape if shape[0] > 0 else (1, ) + shape[1:]
         for shape in input_shapes
     ]
-    for i in range(10):
+    for i in range(1):
         # Generate dummy data as inputs
         inputs = [
-            (args.b - args.a) * np.random.random(shape).astype("float32") + args.a
+            (b - a) * np.random.random(shape).astype("float32") + a
             for shape in input_shapes
         ]
         yield inputs
@@ -126,10 +128,10 @@ def validate(args):
         if image_path:
            data_dict = dict()
            data_dict["image"] = args.image_path 
-           ImageBaseReader image_reader(input_data_dict=data_dict) 
-           reader = image_reader.preprocess 
+           image_reader = ImageBaseReader(input_data_dict=data_dict) 
+           reader = image_reader.preprocess() 
         else:
-           raise Exception, "image path is not set."
+           raise "image path is not set."
     fluid_results_all = []
     onnx_results_all = []
     for inputs in reader():
@@ -160,8 +162,9 @@ def validate(args):
         print("The btach id is %d"%(batch_id))
         batch_inner_id = 0
         for ref, hyp in zip(fluid_results, onnx_results):
-             print("The inner id is %d"%(batch_inner_id))
+            print("The inner id is %d"%(batch_inner_id))
             np.testing.assert_almost_equal(ref, hyp, decimal=args.expected_decimal)
+            batch_inner_id += 1
         batch_id += 1
 
     print("The exported model achieves {}-decimal precision.".format(

@@ -29,113 +29,6 @@ from paddle.fluid.framework import Program, OpProtoHolder
 import fluid_onnx.ops as ops
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor
 
-"""
-NOTE (varunarora): Some of the code snippets below have been inspired from
-op_test.py in /python/paddle/fluid/tests/unittests/ in the original
-Paddle repository (https://github.com/PaddlePaddle/Paddle/).
-
-When in doubt, keep in sync with it's counterparts.
-"""
-
-
-def append_input_output(block, op_proto, np_list, persistable_list, is_input):
-    """Returns a list of Paddle variables associated with a block.
-
-    Args:
-        block:
-        op_proto: The matching C++ operator type.
-        np_list: Dict of value names -> values.
-        persistable_list: List of variables to be persisted.
-        is_input: Boolean of if this is a set of inputs.
-
-    Returns:
-        A dict of variable names -> Paddle variable instances.
-    """
-
-    # A list of expected inputs and outputs, as desired by Paddle's
-    # C++ runtime.
-    proto_list = op_proto.inputs if is_input else op_proto.outputs
-
-    def create_var(block, name, np_list, var_proto):
-        """Creates a Paddle var in the given block and C++ proto type.
-        """
-
-        # If the expected variable is not found is in the provided list
-        # of variables, make an assertion. Else, determine the shape and
-        # and set the LoD level before creating the Paddle variable.
-        if name not in np_list:
-            assert var_proto.intermediate, "{} not found".format(name)
-            shape = None
-            lod_level = None
-        else:
-            np_value = np_list[name]
-            if isinstance(np_value, tuple):
-                shape = list(np_value[0].shape)
-                lod_level = len(np_value[1])
-            else:
-                shape = list(np_value.shape)
-                lod_level = 0
-
-        persistable = True if name in persistable_list else False
-        return block.create_var(
-            dtype='float32',
-            shape=shape,
-            persistable=persistable,
-            lod_level=lod_level,
-            name=name)
-
-    # Go through all the variables in the expected list for this operator.
-    var_dict = {}
-    for var_proto in proto_list:
-        var_name = str(var_proto.name)
-
-        # If these are inputs, and the expected input is not necessary
-        # and not provided in the list of inputs, we move on to the next
-        # expected input. If not, we make sure it the expected input is 
-        # provided, or that it is unnecessary.
-        if is_input:
-            if (var_name not in np_list) and var_proto.dispensable:
-                continue
-            assert (var_name in np_list) or (var_proto.dispensable), \
-                "Missing {} as input".format(var_name)
-
-        # Set duplicable variables as lists of Paddle variables, and standard
-        # ones as simple Paddle variables.
-        if var_proto.duplicable:
-            assert isinstance(np_list[var_name], list), \
-                "Duplicable {} should be set as list".format(var_name)
-            var_list = []
-            for (name, np_value) in np_list[var_name]:
-                var_list.append(
-                    create_var(block, name, {name: np_value}, var_proto))
-            var_dict[var_name] = var_list
-        else:
-            var_dict[var_name] = create_var(block, var_name, np_list, var_proto)
-
-    return var_dict
-
-
-def create_tensor(np_value, place):
-    """Create a LoDTensor initialized by the numpy ndarray.
-
-    Args: 
-        np_value (ndarray|tuple): The numpy ndarry to initialize the tensor, 
-                                  in tuple (value, LoD) when LoD is given.
-        place (CPUPlace|CUDAPlace): The place for the tensor.
-    Return:
-        The created LoDTensor.
-    """
-
-    tensor = core.LoDTensor()
-    if isinstance(np_value, tuple):
-        tensor.set(np_value[0], place)
-        tensor.set_lod(np_value[1])
-    else:
-        tensor.set(np_value, place)
-
-    return tensor
-
-
 class OpTest(unittest.TestCase):
     """Evaluates an op maker's validity.
 
@@ -154,6 +47,112 @@ class OpTest(unittest.TestCase):
 
         Additionally, custom attributes to the op.
     """
+    """
+    NOTE (varunarora): Some of the code snippets below have been inspired from
+    op_test.py in /python/paddle/fluid/tests/unittests/ in the original
+    Paddle repository (https://github.com/PaddlePaddle/Paddle/).
+
+    When in doubt, keep in sync with it's counterparts.
+    """
+
+
+    def append_input_output(self, block, op_proto, np_list, persistable_list, is_input):
+        """Returns a list of Paddle variables associated with a block.
+
+        Args:
+            block:
+            op_proto: The matching C++ operator type.
+            np_list: Dict of value names -> values.
+            persistable_list: List of variables to be persisted.
+            is_input: Boolean of if this is a set of inputs.
+
+        Returns:
+            A dict of variable names -> Paddle variable instances.
+        """
+
+        # A list of expected inputs and outputs, as desired by Paddle's
+        # C++ runtime.
+        proto_list = op_proto.inputs if is_input else op_proto.outputs
+
+        def create_var(block, name, np_list, var_proto):
+            """Creates a Paddle var in the given block and C++ proto type.
+            """
+
+            # If the expected variable is not found is in the provided list
+            # of variables, make an assertion. Else, determine the shape and
+            # and set the LoD level before creating the Paddle variable.
+            if name not in np_list:
+                #assert var_proto.intermediate, "{} not found".format(name)
+                shape = None
+                lod_level = None
+            else:
+                np_value = np_list[name]
+                if isinstance(np_value, tuple):
+                    shape = list(np_value[0].shape)
+                    lod_level = len(np_value[1])
+                else:
+                    shape = list(np_value.shape)
+                    lod_level = 0
+
+            persistable = True if name in persistable_list else False
+            return block.create_var(
+                dtype='float32',
+                shape=shape,
+                persistable=persistable,
+                lod_level=lod_level,
+                name=name)
+
+        # Go through all the variables in the expected list for this operator.
+        var_dict = {}
+        for var_proto in proto_list:
+            var_name = str(var_proto.name)
+
+            # If these are inputs, and the expected input is not necessary
+            # and not provided in the list of inputs, we move on to the next
+            # expected input. If not, we make sure it the expected input is 
+            # provided, or that it is unnecessary.
+            if is_input:
+                if (var_name not in np_list) and var_proto.dispensable:
+                    continue
+                assert (var_name in np_list) or (var_proto.dispensable), \
+                    "Missing {} as input".format(var_name)
+
+            # Set duplicable variables as lists of Paddle variables, and standard
+            # ones as simple Paddle variables.
+            if var_proto.duplicable:
+                assert isinstance(np_list[var_name], list), \
+                    "Duplicable {} should be set as list".format(var_name)
+                var_list = []
+                for (name, np_value) in np_list[var_name]:
+                    var_list.append(
+                        create_var(block, name, {name: np_value}, var_proto))
+                var_dict[var_name] = var_list
+            else:
+                var_dict[var_name] = create_var(block, var_name, np_list, var_proto)
+
+        return var_dict
+
+
+    def create_tensor(self, np_value, place):
+        """Create a LoDTensor initialized by the numpy ndarray.
+
+        Args: 
+            np_value (ndarray|tuple): The numpy ndarry to initialize the tensor, 
+                                      in tuple (value, LoD) when LoD is given.
+            place (CPUPlace|CUDAPlace): The place for the tensor.
+        Return:
+            The created LoDTensor.
+        """
+
+        tensor = core.LoDTensor()
+        if isinstance(np_value, tuple):
+            tensor.set(np_value[0], place)
+            tensor.set_lod(np_value[1])
+        else:
+            tensor.set(np_value, place)
+
+        return tensor
+
 
     def feed_var(self, input_vars, place):
         """Returns a dictionary of variable names -> initialized tensors.
@@ -166,10 +165,10 @@ class OpTest(unittest.TestCase):
         for var_name in input_vars:
             if isinstance(input_vars[var_name], list):
                 for name, np_value in self.inputs[var_name]:
-                    tensor = create_tensor(np_value, place)
+                    tensor = self.create_tensor(np_value, place)
                     feed_map[name] = tensor
             else:
-                tensor = create_tensor(self.inputs[var_name], place)
+                tensor = self.create_tensor(self.inputs[var_name], place)
                 feed_map[var_name] = tensor
 
         return feed_map
@@ -197,9 +196,9 @@ class OpTest(unittest.TestCase):
                                                       "persistable") else []
 
             # Add input and output variables to the global block.
-            inputs = append_input_output(self.block, op_proto, self.inputs,
+            inputs = self.append_input_output(self.block, op_proto, self.inputs,
                                          persistable, True)
-            outputs = append_input_output(self.block, op_proto, self.outputs,
+            outputs = self.append_input_output(self.block, op_proto, self.outputs,
                                           persistable, False)
 
             # Append the op.
