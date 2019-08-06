@@ -104,7 +104,6 @@ def debug_model(op_list, op_trackers, args):
     fetch_var_name = args.name_prefix + "fetch"
     # start check the op test 
     print("--------------------START CHECK TEST OPS!---------------------")
-    """
     for op_name in op_list:
         print("start check the op: %s"%(op_name))
         op_test_name = TEST + op_name + PY
@@ -112,7 +111,6 @@ def debug_model(op_list, op_trackers, args):
         return_code = os.system(run_script)
         if return_code != 0:
             raise Exception("The op %s test check failed!"%(op_name))
-    """
     print("----------------------CHECK TEST OPS OK!----------------------")
     # In some tools, examples(Tf2Onnx, Caffe2Onnx), therse tools just check the last layer output, 
     # we will check all layers output. Just ensure the robustness of Paddle2Onnx

@@ -595,8 +595,28 @@ def reducesumsquare_op():
     pass
 
 
-def reshape_op():
-    pass
+def reshape_op(operator, block):
+    inputs, attrs, outputs = op_io_info(operator)
+    shape_name = ""
+    if 'Shape' in inputs and inputs['Shape'] is not None and len(inputs['Shape']) > 0:
+        shape_name = inputs['Shape'] 
+        return make_node('Reshape', inputs=[inputs['X'][0], shape_name], outputs=outputs['Out'])
+    elif 'ShapeTensor' in inputs and inputs['ShapeTensor'] is not None and len(inputs['ShapeTensor']) > 0:
+        shape_name = inputs['ShapeTensor']
+        return make_node('Reshape', inputs=[inputs['X'][0], shape_name], outputs=outputs['Out'])
+    else:
+        shape_name = outputs['Out'][0] + "@shape_var"
+        output_shape_node = make_node(
+            'Constant',
+            inputs=[],
+            outputs=[shape_name],
+            value=make_tensor(
+                  name=shape_name,
+                  data_type=TensorProto.INT64,
+                  dims=(len(attrs['shape']), ),
+                  vals=attrs['shape']))
+        reshape_node = make_node('Reshape', inputs=[inputs['X'][0], shape_name], outputs=outputs['Out'])
+        return (output_shape_node, reshape_node)
 
 
 def selu_op():
@@ -624,9 +644,19 @@ def spacetodepth_op():
     pass
 
 
-def split_op():
-    pass
-
+def split_op(operator, block):
+    inputs, attrs, outputs = op_io_info(operator)
+    len_sec = len(attrs['sections'])
+    if len_sec > 0:
+        return make_node('Split', inputs=inputs['X'],
+                outputs=outputs['Out'],
+                axis=attrs['axis'],
+                split=attrs['sections'])
+    else:
+        return make_node('Split', inputs=inputs['X'],
+                outputs=outputs['Out'],
+                axis=attrs['axis'])
+       
 
 def squeeze_op():
     pass
@@ -648,8 +678,13 @@ def topk_op():
     pass
 
 
-def transpose_op():
-    pass
+def transpose_op(operator, block):
+    inputs, attrs, outputs = op_io_info(operator)
+    node = make_node('Transpose', inputs=inputs['X'],
+           outputs=outputs['Out'],
+           perm=attrs['axis'])
+    return node
+    
 
 
 def unsqueeze_op():
@@ -718,8 +753,53 @@ def scale_op(operator, block):
     return nodes
        
        
-    
-       
+def swish_op(operator, block):
+    """
+    The active activation swish, x / (1 + exp(-beta * x))
+    """
+    inputs, attrs, outputs = op_io_info(operator) 
+    paddle_var = block.var(inputs["X"][0])
+    shape =  paddle_onnx_shape(paddle_var.shape)
+
+    if 'beta' in attrs:
+        beta = attrs['beta']
+    if 'slope' in attrs:
+        beta = attrs['slope']
+
+    name_beta = [outputs['Out'][0] + "@swish_beta"]
+    node_beta = onnx.helper.make_node(
+        'Constant',
+        inputs=[],
+        outputs=name_beta,
+        value=onnx.helper.make_tensor(
+             name=name_beta[0]+"@const",
+             data_type=onnx.TensorProto.FLOAT,
+             dims=(),
+             vals=[beta]))
+
+    # var and node for beta * x 
+    name_beta_x = [outputs['Out'][0] + "@beta_x"]
+    var_beta_x = onnx.helper.make_tensor_value_info(name_beta_x[0], 
+        PADDLE_TO_ONNX_DTYPE[paddle_var.dtype], shape)
+    node_beta_x = onnx.helper.make_node(
+        'Mul',
+        inputs=[name_beta[0], inputs['X'][0]],
+        outputs=name_beta_x)
+
+    # var and node sigmoid(beta*x)
+    name_sigmoid_x = [outputs['Out'][0] + "@sigmoid_x"]
+    var_sigmoid_x = onnx.helper.make_tensor_value_info(name_sigmoid_x[0],
+        PADDLE_TO_ONNX_DTYPE[paddle_var.dtype], shape)
+    node_sigmoid_x = onnx.helper.make_node(
+        'Sigmoid',
+        inputs=name_beta_x,
+        outputs=name_sigmoid_x)
+
+    node_swish = onnx.helper.make_node(
+        'Mul',
+        inputs=inputs['X'] + name_sigmoid_x,
+        outputs=outputs['Out'])
+    return (node_beta, node_beta_x, node_sigmoid_x, node_swish)
 
 # Based on the ONNX 1.0 operator list generated on March 26th, 2018.
 # Reference for paddle operator availability taken from:
@@ -838,6 +918,10 @@ node_maker = {
     # 'experimental Scale'
     # 'experimental ScaledTanh'
     'thresholded_relu': thresholded_relu_op,
-    'scale': scale_op
+    'scale': scale_op,
+    'split': split_op,
+    'reshape2': reshape_op,
+    'transpose2': transpose_op,
+    'swish': swish_op
     # 'experimental Upsample'
 }

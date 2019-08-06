@@ -173,7 +173,7 @@ class OpTest(unittest.TestCase):
 
         return feed_map
 
-    def eval_fluid_op(self):
+    def eval_fluid_op(self, no_check_set):
         """Run a Paddle program only with the op to test.
 
         Returns the output values after running.
@@ -221,6 +221,8 @@ class OpTest(unittest.TestCase):
             # Construct a unique list of outputs to fetch.
             self.fetch_list = []
             for var_name, var in outputs.items():
+                if var_name in no_check_set:
+                    continue
                 if var_name in self.outputs and var_name not in ignored_outputs:
                     if isinstance(var, list):
                         for v in var:
@@ -236,7 +238,7 @@ class OpTest(unittest.TestCase):
                            return_numpy=True)
         return outs
 
-    def eval_onnx_node(self):
+    def eval_onnx_node(self, no_check_set):
         """Run a Caffe2 program using their ONNX backend.
 
         Prior to running the backend, use the Paddle scope to construct
@@ -250,7 +252,8 @@ class OpTest(unittest.TestCase):
         ]
 
         fetch_target_names = [
-            fetch_target.name for fetch_target in self.fetch_list
+            fetch_target.name for fetch_target in self.fetch_list \
+            if fetch_target.name not in no_check_set 
         ]
         outputs = [
             paddle_variable_to_onnx_tensor(v, self.block)
@@ -282,15 +285,15 @@ class OpTest(unittest.TestCase):
 
         return outs
 
-    def check_output(self, decimal=5):
+    def check_output(self, no_check_set=[], decimal=5):
         """Compares the outputs from the Paddle program and the Caffe2
         backend using the ONNX model constructed by paddle-onnx.
 
         Compares accuracy at a precision of 5 decimal places by default.
         """
 
-        fluid_result = self.eval_fluid_op()
-        onnx_result = self.eval_onnx_node()
+        fluid_result = self.eval_fluid_op(no_check_set)
+        onnx_result = self.eval_onnx_node(no_check_set)
 
         for ref, hyp in zip(fluid_result, onnx_result):
             # Compare the values using numpy's almost_equal comparator.

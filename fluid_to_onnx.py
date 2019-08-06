@@ -87,6 +87,7 @@ def convert(args):
             for v in feed_target_names
         ]
 
+        print(inference_program.to_string(True))
         print("load the model parameter done.")
         # Create nodes using blocks in inference_program
         init_name_prefix(args.name_prefix)
@@ -113,8 +114,11 @@ def convert(args):
                     op_check_list.append(str(op.type))
                 else:
                     if op.type not in ['feed', 'fetch']:
-                        raise NotImplementedError("OP[%s] is not supported in "
-                                                  "the converter!" % op.type)
+                       op_check_list.append(op.type)
+                       #raise NotImplementedError("OP[%s] is not supported in "
+                       #                          "the converter!" % op.type)
+
+        print(set(op_check_list))
         # Create outputs
         fetch_target_names = [
             fetch_target.name for fetch_target in fetch_targets
