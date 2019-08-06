@@ -693,6 +693,7 @@ def unsqueeze_op():
 
 def thresholded_relu_op(operator, block):
     inputs, attrs, outputs = op_io_info(operator)
+    print(attrs)
     return make_node(
         'ThresholdedRelu',
         inputs=inputs['X'],
@@ -755,7 +756,7 @@ def scale_op(operator, block):
        
 def swish_op(operator, block):
     """
-    The active activation swish, x / (1 + exp(-beta * x))
+    The activation swish, x / (1 + exp(-beta * x))
     """
     inputs, attrs, outputs = op_io_info(operator) 
     paddle_var = block.var(inputs["X"][0])
@@ -800,6 +801,25 @@ def swish_op(operator, block):
         inputs=inputs['X'] + name_sigmoid_x,
         outputs=outputs['Out'])
     return (node_beta, node_beta_x, node_sigmoid_x, node_swish)
+
+def relu6_op(operator, block):
+    """
+    The activation function relu6, out=min(max(0,x),6) 
+    And you can set the threshold of activation.
+    """
+    inputs, attrs, outputs = op_io_info(operator) 
+    threshold = attrs['threshold']
+    relu6_node = onnx.helper.make_node(
+        'Clip',
+        inputs=inputs['X'],
+        outputs=outputs['Out'],
+        max=threshold,
+        min=0.0)
+    return relu6_node 
+    #return (node_min, node_max, node_select_max, node_select_min)
+    #return (node_min, node_max, node_select_max)
+
+
 
 # Based on the ONNX 1.0 operator list generated on March 26th, 2018.
 # Reference for paddle operator availability taken from:
@@ -922,6 +942,7 @@ node_maker = {
     'split': split_op,
     'reshape2': reshape_op,
     'transpose2': transpose_op,
-    'swish': swish_op
+    'swish': swish_op,
+    'relu6': relu6_op 
     # 'experimental Upsample'
 }
