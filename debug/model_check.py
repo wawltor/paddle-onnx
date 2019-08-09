@@ -94,8 +94,8 @@ def compare_fluid_onnx_results(fluid_results, onnx_results, feed_target_names):
     for i in range(0, len(fluid_results)):
         print("start check layer data:%s"%(feed_target_names[i]))
         for ref, hyp in zip(fluid_results[i], onnx_results[i]):
-             print(ref.shape)
-             print(hyp.shape)
+             print(ref.flatten())
+             print(hyp.flatten())
              np.testing.assert_almost_equal(ref.flatten(), hyp.flatten(), decimal=5)
 
     
@@ -182,7 +182,3 @@ def debug_model(op_list, op_trackers, args):
                                                                fluid_infer_program.global_block())
            print("the onnx_results len:%d"%(len(onnx_results)))
            compare_fluid_onnx_results(fluid_results, onnx_results, fluid_intermedidate_target_names)
-           #onnx_results = onnx_runner.run(inputs)
-           #for ref, hyp in zip(fluid_results, onnx_results):
-           #    print('start check')
-           #    np.testing.assert_almost_equal(ref, hyp, decimal=5)

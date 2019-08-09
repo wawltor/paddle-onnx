@@ -34,6 +34,10 @@ def parse_args():
     parser.add_argument(
         "--name_prefix", type=str, default="", help="The prefix of Var name.")
     parser.add_argument(
+        "--fluid_model_name", type=str, default="", help="The fluid model name.")
+    parser.add_argument(
+        "--fluid_params_name", type=str, default="", help="The fluid params name.")
+    parser.add_argument(
         "--debug", action="store_true", default=False, help="Use the debug mode to validate the onnx model.")
     parser.add_argument(
         "--image_path", type=str, default="", help="The image path to validate.")
@@ -61,8 +65,15 @@ def convert(args):
     with fluid.scope_guard(inference_scope):
 
         # Load inference program and other target attributes
-        [inference_program, feed_target_names,
-         fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
+        if len(args.fluid_model_name) != 0 and len(args.fluid_params_name) != 0:
+            [inference_program, feed_target_names,
+            fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe,
+                                                          args.fluid_model_name,
+                                                          args.fluid_params_name)
+        else:
+            [inference_program, feed_target_names,
+             fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
+            
         fetch_targets_names = [ data.name for data in fetch_targets]
 
         feed_fetch_list = ["fetch", "feed"]
@@ -87,7 +98,6 @@ def convert(args):
             for v in feed_target_names
         ]
 
-        print(inference_program.to_string(True))
         print("load the model parameter done.")
         # Create nodes using blocks in inference_program
         init_name_prefix(args.name_prefix)
@@ -116,8 +126,9 @@ def convert(args):
                     if op.type not in ['feed', 'fetch']:
                        op_check_list.append(op.type)
                        #raise NotImplementedError("OP[%s] is not supported in "
-                       #                          "the converter!" % op.type)
+                                                 #"the converter!" % op.type)
 
+        print(inference_program.to_string(True))
         print(set(op_check_list))
         # Create outputs
         fetch_target_names = [

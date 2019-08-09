@@ -21,6 +21,7 @@ from onnx.helper import make_node, make_tensor
 from paddle.fluid.executor import _fetch_var as fetch_var
 from fluid.utils import op_io_info, get_old_name
 from fluid_onnx.variables import PADDLE_TO_ONNX_DTYPE, paddle_onnx_shape
+from fluid_onnx.detection_ops import *
 """
 Priority of ops (uniques) to figure out support for.
 
@@ -637,7 +638,8 @@ def slice_op():
 
 def softmax_op(operator, block):
     inputs, attrs, outputs = op_io_info(operator)
-    return make_node('Softmax', inputs=inputs['X'], outputs=outputs['Out'])
+    axis = attrs['axis']
+    return make_node('Softmax', inputs=inputs['X'], outputs=outputs['Out'],axis=axis)
 
 
 def spacetodepth_op():
@@ -820,7 +822,6 @@ def relu6_op(operator, block):
     #return (node_min, node_max, node_select_max)
 
 
-
 # Based on the ONNX 1.0 operator list generated on March 26th, 2018.
 # Reference for paddle operator availability taken from:
 #     https://github.com/PaddlePaddle/Paddle/issues/8028
@@ -943,6 +944,7 @@ node_maker = {
     'reshape2': reshape_op,
     'transpose2': transpose_op,
     'swish': swish_op,
-    'relu6': relu6_op 
+    'relu6': relu6_op,
+    'multiclass_nms': multiclass_nms_op
     # 'experimental Upsample'
 }
