@@ -945,6 +945,7 @@ node_maker = {
     'transpose2': transpose_op,
     'swish': swish_op,
     'relu6': relu6_op,
-    'multiclass_nms': multiclass_nms_op
+    'multiclass_nms': multiclass_nms_op,
+    'prior_box': prior_box_op
     # 'experimental Upsample'
 }

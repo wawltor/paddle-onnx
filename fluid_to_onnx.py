@@ -129,6 +129,7 @@ def convert(args):
                                                  #"the converter!" % op.type)
 
         print(inference_program.to_string(True))
+        print(op_check_list)
         print(set(op_check_list))
         # Create outputs
         fetch_target_names = [
