@@ -946,6 +946,7 @@ node_maker = {
     'swish': swish_op,
     'relu6': relu6_op,
     'multiclass_nms': multiclass_nms_op,
-    'prior_box': prior_box_op
+    'prior_box': prior_box_op,
+    'box_coder': box_coder_op
     # 'experimental Upsample'
 }
