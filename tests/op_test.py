@@ -14,6 +14,7 @@
 
 from caffe2.python.onnx.backend import Caffe2Backend
 import sys
+import os 
 import unittest
 import numpy as np
 
@@ -31,6 +32,7 @@ import fluid_onnx.ops as ops
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor, PADDLE_TO_ONNX_DTYPE
 from onnx import helper
 import pickle 
+import time 
 
 class OpTest(unittest.TestCase):
     """Evaluates an op maker's validity.
@@ -248,9 +250,11 @@ class OpTest(unittest.TestCase):
                 outs = exe.run(program,
                                feed=self.feed_map,
                                fetch_list=self.fetch_list,
-                               return_numpy=False)
+                               return_numpy=True)
             else:
+                start_time = time.time()
                 outs = self.run_executor_return_tensor(exe, program) 
+                end_time = time.time()
         return outs
 
     def eval_onnx_node(self, no_check_set):
@@ -299,7 +303,7 @@ class OpTest(unittest.TestCase):
         outs = rep.run(in_vals)
         return outs
 
-    def eval_onnx_node_with_output_message(self, output_message, fetch_list):
+    def check_onnx_with_onnxruntime(self, no_check_set=[]):
         """Run a Caffe2 program using their ONNX backend.
 
         Prior to running the backend, use the Paddle scope to construct
@@ -312,11 +316,14 @@ class OpTest(unittest.TestCase):
             paddle_variable_to_onnx_tensor(v, self.block) for v in self.feed_map
         ]
 
-        outputs = []
-        for i, name in enumerate(fetch_list):
-            outputs.append(helper.make_tensor_value_info(
-               name, PADDLE_TO_ONNX_DTYPE[output_message[i]], ()
-            ))
+        fetch_target_names = [
+            fetch_target.name for fetch_target in self.fetch_list \
+            if fetch_target.name not in no_check_set 
+        ]
+        outputs = [
+            paddle_variable_to_onnx_tensor(v, self.block)
+            for v in fetch_target_names
+        ]
         # Construct the ONNX model using paddle-onnx.
         onnx_node = ops.node_maker[self.op_type](operator=self.op, block=self.block)
         node_list = list(onnx_node) if isinstance(onnx_node,
@@ -324,49 +331,10 @@ class OpTest(unittest.TestCase):
         for node in node_list:
             check_node(node)
 
-        onnx_graph = make_graph(node_list, self.op_type, inputs, outputs)
-        onnx_model = make_model(onnx_graph, producer_name='unittest')
-        checker.check_model(onnx_model)
-        with open("test.onnx", 'wb') as f:
-             f.write(onnx_model.SerializeToString())
-
-        # Expand input dictionary if there are tensor arrays
-        input_map = {}
-        for v in self.inputs:
-            if isinstance(self.inputs[v], list):
-                input_map.update(self.inputs[v])
-            else:
-                input_map[v] = self.inputs[v]
-
-        #Run the Caffe2Backend with the ONNX model.
-        in_vals = [input_map[input.name] for input in inputs]
-        with open("test.pkl", "wb") as f:
-             pickle.dump(input_map, f)
-        #rep = Caffe2Backend.prepare(onnx_model, device='CPU')
-        #outs = rep.run(in_vals)
-        return outs
-
-    def check_result_with_fetchlist(self, fetch_list):
-        """Run a Caffe2 program using their ONNX backend.
-
-        Prior to running the backend, use the Paddle scope to construct
-        ONNX ops and prepare the inputs and output values based on ONNX
-        compatibility.
-        """
-        # Convert inputs and outputs to ONNX tensors.
-        # Use the Paddle fetch_list to prepare the outputs.
-        inputs = [
-            paddle_variable_to_onnx_tensor(v, self.block) for v in self.feed_map
-        ]
-        # Construct the ONNX model using paddle-onnx.
-        onnx_node, outputs  = ops.node_maker[self.op_type](operator=self.op, block=self.block)
-        node_list = list(onnx_node) if isinstance(onnx_node,
-                                                  tuple) else [onnx_node]
-        for node in node_list:
-            check_node(node)
-
         onnx_graph = make_graph(node_list, self.op_type, inputs, outputs) 
         onnx_model = make_model(onnx_graph, producer_name='unittest')
+        with open("tests/nms_test.onnx", 'wb') as f:
+             f.write(onnx_model.SerializeToString())
         checker.check_model(onnx_model)
         # Expand input dictionary if there are tensor arrays
         input_map = {}
@@ -375,21 +343,33 @@ class OpTest(unittest.TestCase):
                 input_map.update(self.inputs[v])
             else:
                 input_map[v] = self.inputs[v]
-        #Run the Caffe2Backend with the ONNX model.
         in_vals = [input_map[input.name] for input in inputs]
-        rep = Caffe2Backend.prepare(onnx_model, device='CPU')
-        outs = rep.run(in_vals)
-        return outs
-    def check_output(self, no_check_set=[], decimal=5, return_numpy=True):
+        with open("tests/inputs_test.pkl", "wb") as f:
+            pickle.dump(input_map, f)
+        ret = os.system("python tests/onnx_runtime.py")
+
+        with open("tests/outputs_test.pkl", "rb") as f:
+            outputs_val = pickle.load(f)
+        f.close()
+        return outputs_val
+
+        #return outs
+    def check_output(self, no_check_set=[], decimal=6, return_numpy=True, is_nms = False):
         """Compares the outputs from the Paddle program and the Caffe2
         backend using the ONNX model constructed by paddle-onnx.
 
         Compares accuracy at a precision of 5 decimal places by default.
+        Because caffe2 do not support the nms op, we just use onnxruntime to test
         """
 
         fluid_result = self.eval_fluid_op(no_check_set, return_numpy)
-        onnx_result = self.eval_onnx_node(no_check_set)
-
+        if is_nms:
+            onnx_result = self.check_onnx_with_onnxruntime()
+            onnx_result = np.squeeze(onnx_result, axis=0)
+            fluid_result = fluid_result[0]
+            fluid_result = fluid_result[(-fluid_result[:,1]).argsort()]
+        else:  
+            onnx_result = self.eval_onnx_node(no_check_set)
         for ref, hyp in zip(fluid_result, onnx_result):
             # Compare the values using numpy's almost_equal comparator.
             np.testing.assert_almost_equal(ref, hyp, decimal=decimal)
@@ -398,6 +378,6 @@ class OpTest(unittest.TestCase):
         fluid_result = self.eval_fluid_op([], return_numpy)
         onnx_result = self.eval_onnx_node_with_output_message(node_message, fetch_targets)
 
-    def check_intermedidate_result(self, fetch_targets, return_numpy=True):
-        fluid_result = self.eval_fluid_op([], return_numpy)
-        onnx_result =  self.check_result_with_fetchlist(fetch_targets)
+    def check_intermedidate_result(self):
+        fluid_result = self.eval_fluid_op([], True)
+        onnx_result =  self.check_onnx_with_onnxruntime(no_check_set=[])

@@ -22,7 +22,6 @@ from onnx import helper, checker, load
 import fluid_onnx.ops as ops
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor
 from fluid_onnx.variables import PADDLE_TO_ONNX_DTYPE
-from image_reader import ImageBaseReader 
 
 
 def parse_args():
@@ -122,16 +121,7 @@ def validate(args):
         import onnx_tensorrt.backend as backend
         rep = backend.prepare(onnx_model, device='CUDA:0')
     # select the random data reader or use define reader
-    if args.use_data_reader:
-        reader = random_reader
-    else:
-        if image_path:
-           data_dict = dict()
-           data_dict["image"] = args.image_path 
-           image_reader = ImageBaseReader(input_data_dict=data_dict) 
-           reader = image_reader.preprocess() 
-        else:
-           raise "image path is not set."
+    reader = random_reader
     fluid_results_all = []
     onnx_results_all = []
     for inputs in reader():

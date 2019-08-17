@@ -40,6 +40,10 @@ def parse_args():
     parser.add_argument(
         "--debug", action="store_true", default=False, help="Use the debug mode to validate the onnx model.")
     parser.add_argument(
+        "--return_variable", action="store_true", default=False, help="Use the debug mode to validate the onnx model.")
+    parser.add_argument(
+        "--check_task", type=str, default="caffe2", help="Use the debug mode to validate the onnx model.")
+    parser.add_argument(
         "--image_path", type=str, default="", help="The image path to validate.")
     parser.add_argument(
         "--to_print_model",
@@ -74,6 +78,7 @@ def convert(args):
             [inference_program, feed_target_names,
              fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
             
+        print(inference_program.to_string(True))
         fetch_targets_names = [ data.name for data in fetch_targets]
 
         feed_fetch_list = ["fetch", "feed"]
@@ -104,6 +109,8 @@ def convert(args):
         onnx_nodes = []
         op_check_list = []
         op_trackers = []
+        nms_first_index = -1 
+        nms_outputs = []
         for block in inference_program.blocks:
             for op in block.ops:
                 if op.type in ops.node_maker:
@@ -122,14 +129,18 @@ def convert(args):
                     tracker = Tracker(str(op.type), last_node)
                     op_trackers.append(tracker)
                     op_check_list.append(str(op.type))
+                    if op.type == "multiclass_nms" and nms_first_index < 0:
+                        nms_first_index = 0
+                    if nms_first_index >=0:
+                        _, _, output_op = op_io_info(op)
+                        for output in output_op:
+                            nms_outputs.append(output_op[output])
                 else:
                     if op.type not in ['feed', 'fetch']:
-                       op_check_list.append(op.type)
-                       #raise NotImplementedError("OP[%s] is not supported in "
-                                                 #"the converter!" % op.type)
-
-        print(inference_program.to_string(True))
-        print(op_check_list)
+                        op_check_list.append(op.type)
+                        #raise NotImplementedError("OP[%s] is not supported in "
+                        #                         "the converter!" % op.type)
+        print('The operator sets to test')
         print(set(op_check_list))
         # Create outputs
         fetch_target_names = [
@@ -182,10 +193,10 @@ def convert(args):
                     print("The num of %d operators need to check, and %d op outputs need to check."\
                           %(len(op_check_list), len(check_outputs)))
 
-                    debug_model(op_check_list, op_trackers, args)
+                    debug_model(op_check_list, op_trackers, nms_outputs, args)
                     
 
-            except (IOError,e):
+            except:
                 print("Invalid ONNX model saving path: %s" % args.onnx_model)
 
 

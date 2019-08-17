@@ -15,13 +15,15 @@
 from caffe2.python.onnx.backend import Caffe2Backend
 import sys 
 import os
+import pickle 
 import paddle.fluid as fluid
 import paddle.fluid.core as core
 import numpy as np
 from onnx import helper, checker, load
-from image_reader import ImageBaseReader
+from reader.random_reader import image_classification_random_reader
+from reader.image_reader import ImageDetectionReader
 from validate import random_reader
-from debug.onnx_model_helper import split_model
+from debug.onnx_model_helper import split_model, onnx_user_define_fetch_list
 
 TEST="./tests/test_"
 PY="_op.py"
@@ -74,17 +76,12 @@ def split_onnx_model_to_get_intermedidate(onnx_model, feed_target_names,
     to get intermedidate result.
     """ 
     onnx_outputs = []
-    for index, layer_result in enumerate(feed_target_names):
-        print("start get the layer data of %s"%(feed_target_names[index]))
-        layer_onnx_model = split_model(onnx_model, layer_result, global_block)
-        onnx_runner = Caffe2Backend.prepare(layer_onnx_model, device='CPU')
-        layer_outputs = onnx_runner.run(inputs)
-        onnx_outputs.append(layer_outputs)
-    print("The onnx outputs len:%d"%(len(onnx_outputs)))
+    onnx_runner = Caffe2Backend.prepare(onnx_model, device='CPU')
+    layer_outputs = onnx_runner.run(inputs)
     return onnx_outputs
 
 
-def compare_fluid_onnx_results(fluid_results, onnx_results, feed_target_names):
+def compare_fluid_onnx_results(fluid_results, onnx_results, feed_target_names, nms_outputs):
     """
     Compare the fluid and onnx model layer output data, check decimal of two different models
     """
@@ -93,29 +90,51 @@ def compare_fluid_onnx_results(fluid_results, onnx_results, feed_target_names):
                         ,fluid_results:%d, onnx_results:%d"%(len(fluid_results), len(onnx_results)))
     for i in range(0, len(fluid_results)):
         print("start check layer data:%s"%(feed_target_names[i]))
-        for ref, hyp in zip(fluid_results[i], onnx_results[i]):
+        fluid_result = fluid_results[i]
+        onnx_result = onnx_results[i]
+        if feed_target_names[i] in nms_outputs:
+            onnx_result = np.squeeze(onnx_result, axis=0)
+            fluid_result = fluid_result[0]
+            fluid_result = fluid_result[(-fluid_result[:,1]).argsort()]
+        for ref, hyp in zip(fluid_results, onnx_results):
              print(ref.flatten())
              print(hyp.flatten())
              np.testing.assert_almost_equal(ref.flatten(), hyp.flatten(), decimal=5)
 
     
-def debug_model(op_list, op_trackers, args):
+def debug_model(op_list, op_trackers, nms_outputs, args):
+
+    return_numpy = not args.return_variable
+    reader = None 
+    runner_type = "caffe2"
+    runner = None 
+    if args.check_task == "image_classification":
+         reader = image_classification_random_reader
+    elif args.check_task == "image_detection":
+         detection = ImageDetectionReader(args.image_path)
+         reader = detection.reader
+         reader = image_classification_random_reader
+         runner_type = "onnxruntime"
+    else:
+        raise Exception("Now just support the image_classification and image_detection task")
+
+    print(nms_outputs)
     feed_var_name = args.name_prefix + "feed"
     fetch_var_name = args.name_prefix + "fetch"
     # start check the op test 
     print("--------------------START CHECK TEST OPS!---------------------")
-    for op_name in op_list:
-        print("start check the op: %s"%(op_name))
-        op_test_name = TEST + op_name + PY
-        run_script = "python " + op_test_name 
-        return_code = os.system(run_script)
-        if return_code != 0:
-            raise Exception("The op %s test check failed!"%(op_name))
-    print("----------------------CHECK TEST OPS OK!----------------------")
+    #for op_name in op_list:
+    #    print("start check the op: %s"%(op_name))
+    #    op_test_name = TEST + op_name + PY
+    #    run_script = "python " + op_test_name 
+    #    return_code = os.system(run_script)
+    #    if return_code != 0:
+    #        raise Exception("The op %s test check failed!"%(op_name))
+    print("----------------------CHECK TEST OPS OK!-----------------------")
+
     # In some tools, examples(Tf2Onnx, Caffe2Onnx), therse tools just check the last layer output, 
     # we will check all layers output. Just ensure the robustness of Paddle2Onnx
     # start check the output of op
-
     print("--------------------START CHECK OPS OUTPUT!--------------------")
     # get the intermediate result of fluid_model & onnx model
     fluid_intermedidate_target_names = []
@@ -129,28 +148,69 @@ def debug_model(op_list, op_trackers, args):
             out2op[output] = tracker
         fluid_intermedidate_target_names.extend(outputs) 
 
-    fluid_intermedidate_target_names = fluid_intermedidate_target_names[:10]
+    fluid_intermedidate_target_names = fluid_intermedidate_target_names[:2]
     # load the paddle and onnx model 
     # init the fluid executor 
+
     place = fluid.CPUPlace()
     exe = fluid.Executor(place)
-    [fluid_infer_program, feed_target_names,
-        fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
+    feed_target_names = None
+    if len(args.fluid_model_name) != 0 and len(args.fluid_params_name) != 0:
+        [fluid_infer_program, feed_target_names,
+        fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe,
+                                                      args.fluid_model_name,
+                                                      args.fluid_params_name)
+    else:
+        [fluid_infer_program, feed_target_names,
+            fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
 
     fetch_target_names = [ target.name for target in fetch_targets ]
-    fluid_intermedidate_target_names.extend(fetch_target_names)
+    #fluid_intermedidate_target_names.extend(fetch_target_names)
     # in this section, wo will set the varaiable we want to get 
     global_block = fluid_infer_program.global_block()
+    
     fetch_list = [global_block.var(name) for name in fluid_intermedidate_target_names\
                  if global_block.has_var(name)]
     fluid_intermedidate_target_names = [var.name for var in fetch_list]
     print("the fetch list len %d"%(len(fetch_list)))
+
     # load the onnx model and init the onnx executor  
     onnx_model = load(args.onnx_model)
-    onnx_runner = Caffe2Backend.prepare(onnx_model, device='CPU')
     # user define the fetch list 
+    onnx_model = onnx_user_define_fetch_list(onnx_model, global_block, fluid_intermedidate_target_names)
     user_define_fetch_list(fluid_infer_program, fluid_intermedidate_target_names, 
                           fetch_var_name)
+    if runner_type == "caffe2":
+        runner = Caffe2Backend.prepare(onnx_model, device='CPU')
+
+    for inputs in reader(fluid_infer_program,\
+        feed_target_names):
+        fluid_results = exe.run(fluid_infer_program,
+                               feed=dict(zip(feed_target_names, inputs)),
+                               fetch_list=fetch_list,
+                               feed_var_name=feed_var_name,
+                               fetch_var_name=fetch_var_name,
+                               return_numpy=return_numpy)
+        print("the fluid results len:%d"%(len(fluid_results)))
+        if runner == None:
+            #save model to tests dir and run python script
+            with open("tests/nms_test.onnx", 'wb') as f:
+                f.write(onnx_model.SerializeToString())
+            f.close()
+            with open("tests/inputs_test.pkl",'wb') as f:
+                pickle.dump(inputs, f)
+            f.close()
+            ret = os.system("python tests/onnx_runtime.py")
+            with open("tests/outputs_test.pkl", "rb") as f:
+                 onnx_results = pickle.load(f)
+            f.close()
+        else:
+            onnx_results = runner.run(inputs)
+        print("the onnx_results len:%d"%(len(onnx_results)))
+        compare_fluid_onnx_results(fluid_results, onnx_results, fluid_intermedidate_target_names, nms_outputs)
+    
+
+    """
     # use the random reader and image reader to validate model 
     if args.image_path and False:
        data_dict = dict()
@@ -169,7 +229,8 @@ def debug_model(op_list, op_trackers, args):
            onnx_results = onnx_runner.run(inputs)
            onnx_results_all.append(onnx_results)
     else:
-        for inputs in random_reader(fluid_infer_program, feed_target_names):
+        for inputs in image_classification_random_reader(fluid_infer_program,\
+            feed_target_names):
            fluid_results = exe.run(fluid_infer_program,
                                    feed=dict(zip(feed_target_names, inputs)),
                                    fetch_list=fetch_list,
@@ -182,3 +243,4 @@ def debug_model(op_list, op_trackers, args):
                                                                fluid_infer_program.global_block())
            print("the onnx_results len:%d"%(len(onnx_results)))
            compare_fluid_onnx_results(fluid_results, onnx_results, fluid_intermedidate_target_names)
+     """

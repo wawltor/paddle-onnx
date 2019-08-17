@@ -13,8 +13,30 @@
 # limitations under the License.
 # -*- coding:utf-8 -*-
 import onnx
-from onnx import helper
+from onnx import helper, shape_inference
 from fluid_onnx.variables import paddle_variable_to_onnx_tensor, paddle_onnx_weight
+
+def onnx_user_define_fetch_list(model, global_block, fetch_targets):
+    """
+    Set the onnx model outputs
+    """
+    nodes = model.graph.node
+    outputs = []
+    var_out = []
+    for fetch_target in fetch_targets:
+        var_out.append(paddle_variable_to_onnx_tensor(fetch_target, global_block))
+    graph = helper.make_graph(nodes=nodes, 
+                              name="debug",
+                              initializer=model.graph.initializer,
+                              inputs=model.graph.input,
+                              outputs=var_out) 
+    onnx_model = helper.make_model(graph)
+    #onnx_model = shape_inference.infer_shapes(onnx_model)
+
+    if len(onnx_model.graph.input) != len(model.graph.input):
+        raise RuntimeError("Input mismatch {} != {}".format(
+            len(onnx_model.input), len(model.input)))
+    return onnx_model
 
 def split_model(model, outputs, global_block):
     """
@@ -60,14 +82,6 @@ def split_model(model, outputs, global_block):
                               outputs=var_out) 
     onnx_model = helper.make_model(graph)
     
-    """
-    onnx_model.ir_version = model.ir_version
-    onnx_model.producer_name = model.producer_name
-    onnx_model.producer_version = model.producer_version
-    onnx_model.domain = model.domain
-    onnx_model.model_version = model.model_version
-    onnx_model.doc_string = model.doc_string
-    """
 
     if len(onnx_model.graph.input) != len(model.graph.input):
         raise RuntimeError("Input mismatch {} != {}".format(

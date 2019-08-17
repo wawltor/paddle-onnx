@@ -271,13 +271,47 @@ def elementwise_ops(op_type, operator, block):
     """
 
     inputs, attrs, outputs = op_io_info(operator)
-    #rank_x = len(block.vars[get_old_name(inputs['X'][0])].shape)
-    #rank_y = len(block.vars[get_old_name(inputs['Y'][0])].shape)
-    #axis = rank_x - rank_y if attrs['axis'] == -1 else attrs['axis']
-    return make_node(
+    node_list = []
+    Y_shape_name = inputs['Y']
+    if 'axis' in attrs:
+        shape_x = block.vars[get_old_name(inputs['X'][0])].shape
+        shape_y = block.vars[get_old_name(inputs['Y'][0])].shape
+        rank_x = len(shape_x)
+        rank_y = len(shape_y)
+        axis = rank_x - rank_y if attrs['axis'] == -1 else attrs['axis']
+        shape = list(shape_y)
+        pre_shape = []
+        post_shape = []
+        if axis > 0:
+           for i in range (0, axis):
+               pre_shape.append(1)
+        if axis + len(shape) < rank_x:
+           for i in range(axis + len(shape), rank_x):
+               post_shape.append(1)
+        pre_shape.extend(shape)
+        pre_shape.extend(post_shape)
+        final_shape = [ i if i > 0 else 1 for i in pre_shape]
+        shape_name = outputs['Out'][0] + "@shape_var"
+        output_const_node = make_node(
+            'Constant',
+            inputs=[],
+            outputs=[shape_name],
+            value=make_tensor(
+                  name=shape_name+"@const",
+                  data_type=TensorProto.INT64,
+                  dims=[len(final_shape)],
+                  vals=final_shape))
+        
+        output_shape_name = [outputs['Out'][0] + "@reshape_y"]
+        output_shape_node = make_node('Reshape', inputs=[inputs['Y'][0], shape_name], outputs=output_shape_name)
+        node_list.extend([output_const_node, output_shape_node])
+        Y_shape_name = output_shape_name
+    node_type = make_node(
         op_type,
-        inputs=inputs['X'] + inputs['Y'],
+        inputs=inputs['X'] + Y_shape_name, 
         outputs=outputs['Out'])
+    node_list.append(node_type)
+    return tuple(node_list)
 
 
 def elu_op(operator, block):
@@ -290,8 +324,11 @@ def equal_op():
     pass
 
 
-def flatten_op():
-    pass
+def flatten_op(operator, block):
+    inputs, attrs, outputs = op_io_info(operator)
+    axis = attrs['axis']
+    return make_node('Flatten', inputs=inputs['X'],
+        outputs=outputs['Out'], axis=axis)
 
 
 def gru_op():
@@ -600,8 +637,15 @@ def reshape_op(operator, block):
     inputs, attrs, outputs = op_io_info(operator)
     shape_name = ""
     if 'Shape' in inputs and inputs['Shape'] is not None and len(inputs['Shape']) > 0:
-        shape_name = inputs['Shape'] 
-        return make_node('Reshape', inputs=[inputs['X'][0], shape_name], outputs=outputs['Out'])
+        shape_name = inputs['Shape'][0] 
+        # cast the shape to int64 
+        shape_name_cast = [shape_name + "@cast"]
+        cast_node = make_node('Cast',
+            inputs=inputs['Shape'],
+            outputs=shape_name_cast,
+            to=7)
+        reshape_node = make_node('Reshape', inputs=[inputs['X'][0], shape_name_cast[0]], outputs=outputs['Out'])
+        return (cast_node, reshape_node)
     elif 'ShapeTensor' in inputs and inputs['ShapeTensor'] is not None and len(inputs['ShapeTensor']) > 0:
         shape_name = inputs['ShapeTensor']
         return make_node('Reshape', inputs=[inputs['X'][0], shape_name], outputs=outputs['Out'])
@@ -818,9 +862,28 @@ def relu6_op(operator, block):
         max=threshold,
         min=0.0)
     return relu6_node 
-    #return (node_min, node_max, node_select_max, node_select_min)
-    #return (node_min, node_max, node_select_max)
 
+def assign_value_op(operator, block):
+    inputs, attrs, outputs = op_io_info(operator)
+    values = None 
+    data_type = None
+    if 'fp32_values' in attrs and len(attrs['fp32_values']) > 0:
+        values = attrs['fp32_values']
+        data_type = onnx.TensorProto.FLOAT
+    if 'int32_values' in attrs and len(attrs['int32_values']) > 0:
+        values = attrs['int32_values']
+        data_type = onnx.TensorProto.INT32
+    
+    node = onnx.helper.make_node(
+        'Constant',
+        inputs=[],
+        outputs=outputs['Out'],
+        value=onnx.helper.make_tensor(
+             name=outputs['Out'][0]+"@const",
+             data_type=data_type,
+             dims=(),
+             vals=values))
+    return node
 
 # Based on the ONNX 1.0 operator list generated on March 26th, 2018.
 # Reference for paddle operator availability taken from:
@@ -947,6 +1010,8 @@ node_maker = {
     'relu6': relu6_op,
     'multiclass_nms': multiclass_nms_op,
     'prior_box': prior_box_op,
-    'box_coder': box_coder_op
+    'box_coder': box_coder_op,
+    'flatten2': flatten_op,
+    'assign_value': assign_value_op 
     # 'experimental Upsample'
 }

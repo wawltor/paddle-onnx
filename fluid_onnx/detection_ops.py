@@ -19,6 +19,7 @@ import numpy as np
 from functools import partial
 from onnx import TensorProto
 from onnx.helper import make_node, make_tensor
+from onnx import onnx_pb
 from paddle.fluid.executor import _fetch_var as fetch_var
 from fluid.utils import op_io_info, get_old_name
 from fluid_onnx.variables import PADDLE_TO_ONNX_DTYPE, paddle_onnx_shape
@@ -29,10 +30,12 @@ def multiclass_nms_op(operator, block):
     This op is get the select boxes from origin boxes.
     """
     inputs, attrs, outputs = op_io_info(operator)
+    result_name = outputs['Out'][0]
     #convert the paddle attribute to onnx tensor 
     name_score_threshold = [outputs['Out'][0] + "@score_threshold"]
     name_iou_threshold = [outputs['Out'][0] + "@iou_threshold"]
-    name_keep_top_k = [outputs['Out'][0] + '@keep_top_k ']
+    name_keep_top_k = [outputs['Out'][0] + '@keep_top_k']
+    name_keep_top_k_2D = [outputs['Out'][0] + '@keep_top_k_1D']
 
     node_score_threshold = onnx.helper.make_node(
         'Constant',
@@ -64,6 +67,16 @@ def multiclass_nms_op(operator, block):
              dims=(),
              vals=[np.int64(attrs['keep_top_k'])]))
 
+    node_keep_top_k_2D = onnx.helper.make_node(
+        'Constant',
+        inputs=[],
+        outputs=name_keep_top_k_2D,
+        value=onnx.helper.make_tensor(
+             name=name_keep_top_k_2D[0]+"@const",
+             data_type=onnx.TensorProto.INT64,
+             dims=[1, 1],
+             vals=[np.int64(attrs['keep_top_k'])]))
+
     # the paddle data format is x1,y1,x2,y2
     kwargs = {'center_point_box' : 0}
 
@@ -74,60 +87,253 @@ def multiclass_nms_op(operator, block):
             name_iou_threshold + name_score_threshold,
         outputs=name_select_nms)
     # step 1 nodes select the nms class 
-    node_list = [node_score_threshold, node_iou_threshold, node_keep_top_k, node_select_nms]
+    node_list = [node_score_threshold, node_iou_threshold, node_keep_top_k, node_keep_top_k_2D, node_select_nms]
+
+    # create some const value to use 
+    name_const_value = [result_name+"@const_0", 
+        result_name+"@const_1",\
+        result_name+"@const_2",\
+        result_name+"@const_-1"]
+    value_const_value = [0, 1, 2, -1]
+    for name, value in zip(name_const_value, value_const_value): 
+        node = onnx.helper.make_node(
+            'Constant',
+            inputs=[],
+            outputs=[name],
+            value=onnx.helper.make_tensor(
+                 name=name+"@const",
+                 data_type=onnx.TensorProto.INT64,
+                 dims=[1],
+                 vals=[value]))
+        node_list.append(node)
+
+    # Ine this code block, we will deocde the raw score data, reshape N * C * M to 1 * N*C*M 
+    # and the same time, decode the select indices to 1 * D, gather the select_indices
+    outputs_gather_1 = [result_name + "@gather_1"]
+    node_gather_1 = onnx.helper.make_node('Gather', 
+        inputs=name_select_nms + [result_name+"@const_1"],
+        outputs=outputs_gather_1,
+        axis=1)
+    node_list.append(node_gather_1)
+
+    outputs_squeeze_gather_1 = [result_name + "@sequeeze_gather_1"]
+    node_squeeze_gather_1 = onnx.helper.make_node('Squeeze',
+        inputs=outputs_gather_1,
+        outputs=outputs_squeeze_gather_1,
+        axes=[1])
+    node_list.append(node_squeeze_gather_1)
+
+    outputs_gather_2 = [result_name + "@gather_2"]
+    node_gather_2 = onnx.helper.make_node('Gather', 
+        inputs=name_select_nms + [result_name+"@const_2"],
+        outputs=outputs_gather_2,
+        axis=1)
+    node_list.append(node_gather_2)
+    
+    #slice the class is not 0 
+    outputs_nonzero = [result_name + "@nonzero"]
+    node_nonzero = onnx.helper.make_node('NonZero',
+        inputs=outputs_squeeze_gather_1,
+        outputs=outputs_nonzero)
+    node_list.append(node_nonzero)
+
+    outputs_gather_1_nonzero = [result_name + "@gather_1_nonzero"]
+    node_gather_1_nonzero = onnx.helper.make_node('Gather', 
+         inputs=outputs_gather_1 + outputs_nonzero,
+         outputs=outputs_gather_1_nonzero,
+         axis=0)
+    node_list.append(node_gather_1_nonzero)
+
+    outputs_gather_2_nonzero = [result_name + "@gather_2_nonzero"]
+    node_gather_2_nonzero = onnx.helper.make_node('Gather', 
+         inputs=outputs_gather_2 + outputs_nonzero,
+         outputs=outputs_gather_2_nonzero,
+         axis=0)
+    node_list.append(node_gather_2_nonzero)
+
+    # reshape scores N * C * M to (N*C*M) * 1 
+    outputs_reshape_scores_rank1 = [result_name + "@reshape_scores_rank1"]
+    node_reshape_scores_rank1 = onnx.helper.make_node("Reshape",
+        inputs=inputs['Scores'] + [result_name+"@const_-1"],
+        outputs=outputs_reshape_scores_rank1)
+    node_list.append(node_reshape_scores_rank1)
+
+    # get the shape of scores 
+    outputs_shape_scores = [result_name + "@shape_scores"]
+    node_shape_scores = onnx.helper.make_node('Shape',
+        inputs=inputs['Scores'],
+        outputs=outputs_shape_scores)
+    node_list.append(node_shape_scores)
+
+    # gather the index: 2 shape of scores 
+    outputs_gather_scores_dim1 = [result_name + "@gather_scores_dim1"]
+    node_gather_scores_dim1 = onnx.helper.make_node('Gather', 
+        inputs=outputs_shape_scores + [result_name+"@const_2"],
+        outputs=outputs_gather_scores_dim1,
+        axis=0)
+    node_list.append(node_gather_scores_dim1)
+    
+    # mul class * M 
+    outputs_mul_classnum_boxnum = [result_name + "@mul_classnum_boxnum"] 
+    node_mul_classnum_boxnum = onnx.helper.make_node('Mul',
+        inputs=outputs_gather_1_nonzero + outputs_gather_scores_dim1,
+        outputs=outputs_mul_classnum_boxnum)
+    node_list.append(node_mul_classnum_boxnum)
+
+    # add class * M * index 
+    outputs_add_class_M_index = [result_name + "@add_class_M_index"]
+    node_add_class_M_index = onnx.helper.make_node('Add',
+        inputs=outputs_mul_classnum_boxnum + outputs_gather_2_nonzero,
+        outputs=outputs_add_class_M_index)
+    node_list.append(node_add_class_M_index)
+
+    # Squeeze the indices to 1 dim  
+    outputs_squeeze_select_index = [result_name + "@squeeze_select_index"]
+    node_squeeze_select_index = onnx.helper.make_node('Squeeze',
+        inputs=outputs_add_class_M_index,
+        outputs=outputs_squeeze_select_index,
+        axes=[0, 2])
+    node_list.append(node_squeeze_select_index)
+
+    # gather the data from flatten scores 
+    outputs_gather_select_scores = [result_name + "@gather_select_scores"]
+    node_gather_select_scores = onnx.helper.make_node('Gather',
+        inputs=outputs_reshape_scores_rank1 + \
+            outputs_squeeze_select_index,
+        outputs=outputs_gather_select_scores,
+        axis=0)
+    node_list.append(node_gather_select_scores)
+
+    # get nums to input TopK 
+    outputs_shape_select_num = [result_name + "@shape_select_num"] 
+    node_shape_select_num = onnx.helper.make_node('Shape',
+        inputs=outputs_gather_select_scores,
+        outputs=outputs_shape_select_num)
+    node_list.append(node_shape_select_num)
+   
+    outputs_gather_select_num = [result_name + "@gather_select_num"]
+    node_gather_select_num = onnx.helper.make_node('Gather',
+        inputs=outputs_shape_select_num+[result_name+"@const_0"],
+        outputs=outputs_gather_select_num,
+        axis=0)
+    node_list.append(node_gather_select_num)
+     
+    outputs_unsqueeze_select_num = [result_name + "@unsqueeze_select_num"]
+    node_unsqueeze_select_num = onnx.helper.make_node('Unsqueeze',
+        inputs=outputs_gather_select_num,
+        outputs=outputs_unsqueeze_select_num,
+        axes=[0])
+    node_list.append(node_unsqueeze_select_num)
+    
+    outputs_concat_topK_select_num = [result_name + "@conat_topK_select_num"]
+    node_conat_topK_select_num = onnx.helper.make_node('Concat',
+        inputs=outputs_unsqueeze_select_num+name_keep_top_k_2D,
+        outputs=outputs_concat_topK_select_num,
+        axis=0)
+    node_list.append(node_conat_topK_select_num)
+
+    outputs_cast_concat_topK_select_num = [result_name + "@concat_topK_select_num"]
+    node_outputs_cast_concat_topK_select_num = onnx.helper.make_node('Cast',
+        inputs=outputs_concat_topK_select_num,
+        outputs=outputs_cast_concat_topK_select_num,
+        to=6)
+    node_list.append(node_outputs_cast_concat_topK_select_num)
+    # get min(topK, num_select)
+    outputs_compare_topk_num_select = [result_name + "@compare_topk_num_select"]
+    node_compare_topk_num_select = onnx.helper.make_node('ReduceMin',
+        inputs=outputs_cast_concat_topK_select_num,
+        outputs=outputs_compare_topk_num_select,
+        keepdims=0) 
+    node_list.append(node_compare_topk_num_select)
+
+    # unsqueeze the indices to 1D tensor 
+    outputs_unsqueeze_topk_select_indices = [result_name + "@unsqueeze_topk_select_indices"] 
+    node_unsqueeze_topk_select_indices = onnx.helper.make_node('Unsqueeze',
+        inputs=outputs_compare_topk_num_select,
+        outputs=outputs_unsqueeze_topk_select_indices,
+        axes=[0])
+    node_list.append(node_unsqueeze_topk_select_indices)
+
+    # cast the indices to INT64
+    outputs_cast_topk_indices = [result_name + "@cast_topk_indices"]
+    node_cast_topk_indices = onnx.helper.make_node('Cast',
+        inputs=outputs_unsqueeze_topk_select_indices,
+        outputs=outputs_cast_topk_indices,
+        to=7)
+    node_list.append(node_cast_topk_indices)
+
+    # select topk scores  indices
+    outputs_topk_select_topk_indices = [result_name + "@topk_select_topk_values",\
+        result_name + "@topk_select_topk_indices"]
+    node_topk_select_topk_indices = onnx.helper.make_node('TopK',
+        inputs=outputs_gather_select_scores + outputs_cast_topk_indices,
+        outputs=outputs_topk_select_topk_indices)
+    node_list.append(node_topk_select_topk_indices)
+
+    # gather topk label, scores, boxes
+    outputs_gather_topk_scores = [result_name + "@gather_topk_scores"]
+    node_gather_topk_scores = onnx.helper.make_node('Gather', 
+        inputs=outputs_gather_select_scores + [outputs_topk_select_topk_indices[1]],
+        outputs=outputs_gather_topk_scores,
+        axis=0) 
+    node_list.append(node_gather_topk_scores)
+
+    outputs_gather_topk_class = [result_name + "@gather_topk_class"]
+    node_gather_topk_class = onnx.helper.make_node('Gather',
+        inputs=outputs_gather_1_nonzero + [outputs_topk_select_topk_indices[1]],
+        outputs=outputs_gather_topk_class,
+        axis=1)
+    node_list.append(node_gather_topk_class)
+
+    # gather the boxes need to gather the boxes id, then get boxes 
+    outputs_gather_topk_boxes_id = [result_name + "@gather_topk_boxes_id"] 
+    node_gather_topk_boxes_id = onnx.helper.make_node('Gather',
+        inputs=outputs_gather_2_nonzero + [outputs_topk_select_topk_indices[1]],
+        outputs=outputs_gather_topk_boxes_id,
+        axis=1)
+    node_list.append(node_gather_topk_boxes_id)
+
+    # squeeze the gather_topk_boxes_id to 1 dim 
+    outputs_squeeze_topk_boxes_id = [result_name + "@squeeze_topk_boxes_id"]
+    node_squeeze_topk_boxes_id = onnx.helper.make_node('Squeeze',
+        inputs=outputs_gather_topk_boxes_id,
+        outputs=outputs_squeeze_topk_boxes_id,
+        axes=[0, 2])
+    node_list.append(node_squeeze_topk_boxes_id)
+
+    outputs_gather_select_boxes = [result_name + "@gather_select_boxes"] 
+    node_gather_select_boxes = onnx.helper.make_node('Gather', 
+        inputs=inputs['BBoxes'] + outputs_squeeze_topk_boxes_id,
+        outputs=outputs_gather_select_boxes,
+        axis=1)
+    node_list.append(node_gather_select_boxes)
+
+    # concat the final result 
+    # before concat need to cast the class to float 
+    outputs_cast_topk_class = [ result_name + "@cast_topk_class"]
+    node_cast_topk_class = onnx.helper.make_node('Cast',
+        inputs=outputs_gather_topk_class,
+        outputs=outputs_cast_topk_class,
+        to=1)
+    node_list.append(node_cast_topk_class)
+
+    outputs_unsqueeze_topk_scores = [ result_name + "@unsqueeze_topk_scores"]
+    node_unsqueeze_topk_scores = onnx.helper.make_node('Unsqueeze',
+        inputs=outputs_gather_topk_scores,
+        outputs=outputs_unsqueeze_topk_scores,
+        axes=[0, 2])
+    node_list.append(node_unsqueeze_topk_scores)
+
+    inputs_concat_final_results = outputs_cast_topk_class + outputs_unsqueeze_topk_scores +\
+        outputs_gather_select_boxes 
+    outputs_concat_final_results = outputs['Out']
+    node_concat_final_results = onnx.helper.make_node('Concat',
+        inputs=inputs_concat_final_results,
+        outputs=outputs_concat_final_results,
+        axis=2)
+    node_list.append(node_concat_final_results)
+
     return tuple(node_list)
-
-    """
-    ## this op is slice the class from nms 
-    # create the const value to slice 
-    Constant_684 = ["Constant_684"]
-    Constant_685 = ["Constant_685"]
-    Constant_686 = ["Constant_686"]
-    Constant_687 = ["Constant_687"]
-    name_slice_step = [outputs['Out'] + "@slice_step"]
-
-    node_Constant_684 = onnx.helper.make_node(
-        'Constant',
-        inputs=[],
-        outputs=name_slice_start,
-        value=onnx.helper.make_tensor(
-             name=Constant_684+"@const",
-             data_type=onnx.TensorProto.INT32,
-             dims=(),
-             vals=[]))
-
-    node_Constant_685 = onnx.helper.make_node(
-        'Constant',
-        inputs=[],
-        outputs=name_slice_start,
-        value=onnx.helper.make_tensor(
-             name=Constant_685+"@const",
-             data_type=onnx.TensorProto.INT32,
-             dims=(),
-             vals=[]))
-    node_Constant_686 = onnx.helper.make_node(
-        'Constant',
-        inputs=[],
-        outputs=name_slice_start,
-        value=onnx.helper.make_tensor(
-             name=Constant_686+"@const",
-             data_type=onnx.TensorProto.INT32,
-             dims=(),
-             vals=[]))
-    node_Constant_687 = onnx.helper.make_node(
-        'Constant',
-        inputs=[],
-        outputs=name_slice_start,
-        value=onnx.helper.make_tensor(
-             name=Constant_687+"@const",
-             data_type=onnx.TensorProto.INT32,
-             dims=(),
-             vals=[]))
-    node_step_2 = [node_Constant_684, node_Constant_685, node_Constant_686, node_Constant_687]
-    node_list.extend(node_step_2)
-    return (node_score_threshold, node_iou_threshold, node_keep_top_k, node_slect_nms)
-    """
-
 
 
 
@@ -619,9 +825,4 @@ def box_coder_op(operator, block):
       outputs=outputs['OutputBox'],
       axis=len(output_shape_step1))
    node_list.append(node_point_final)
-  #@ output_shape_step1.append(4)
-  #@ for output_name in  outputs_points_final:
-  #@     value_info = onnx.helper.make_tensor_value_info(output_name,
-  #@         PADDLE_TO_ONNX_DTYPE[prior_var.dtype], output_shape_step1) 
-  #@     final_outputs_vars.append(value_info)
    return tuple(node_list)

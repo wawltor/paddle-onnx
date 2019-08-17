@@ -128,7 +128,9 @@ def multiclass_nms(boxes, scores, background, score_threshold, nms_threshold,
         selected_indices[c] = indices
         num_det += len(indices)
 
-    print(selected_indices)
+    value_len = 0
+    for value in selected_indices.values():
+            value_len += len(value)
     if keep_top_k > -1 and num_det > keep_top_k:
         score_index = []
         for c, indices in selected_indices.items():
@@ -153,44 +155,6 @@ def multiclass_nms(boxes, scores, background, score_threshold, nms_threshold,
         num_det = keep_top_k
 
     return selected_indices, num_det
-
-
-def lod_multiclass_nms(boxes, scores, background, score_threshold,
-                       nms_threshold, nms_top_k, keep_top_k, box_lod,
-                       normalized):
-    det_outs = []
-    lod = []
-    head = 0
-    for n in range(len(box_lod[0])):
-        box = boxes[head:head + box_lod[0][n]]
-        score = scores[head:head + box_lod[0][n]]
-        head = head + box_lod[0][n]
-        nmsed_outs, nmsed_num = multiclass_nms(
-            box,
-            score,
-            background,
-            score_threshold,
-            nms_threshold,
-            nms_top_k,
-            keep_top_k,
-            normalized,
-            shared=False)
-        if nmsed_num == 0:
-            continue
-        lod.append(nmsed_num)
-        tmp_det_out = []
-        for c, indices in nmsed_outs.items():
-            for idx in indices:
-                xmin, ymin, xmax, ymax = box[idx, c, :]
-                tmp_det_out.append([c, score[idx][c], xmin, ymin, xmax, ymax])
-        sorted_det_out = sorted(
-            tmp_det_out, key=lambda tup: tup[0], reverse=False)
-        det_outs.extend(sorted_det_out)
-    if len(lod) == 0:
-        lod.append(1)
-
-    return det_outs, lod
-
 
 def batched_multiclass_nms(boxes,
                            scores,
@@ -239,9 +203,9 @@ class TestMulticlassNMSOp(OpTest):
 
     def setUp(self):
         self.set_argument()
-        N = 7
+        N = 1
         M = 1200
-        C = 10
+        C = 21
         BOX_SIZE = 4
         background = 0
         nms_threshold = 0.5 
@@ -284,8 +248,9 @@ class TestMulticlassNMSOp(OpTest):
         }
 
     def test_check_output(self):
-        self.check_onnx_result(node_message=[core.VarDesc.VarType.INT64], fetch_targets=["Out@select_index"])
-        #self.check_output(return_numpy=False)
+        #self.check_onnx_result(node_message=[core.VarDesc.VarType.INT64], fetch_targets=["Out@select_index"])
+        self.check_output(return_numpy=False, is_nms=True)
+        #self.check_intermedidate_result(fetch_targets=[])
 """
 class TestMulticlassNMSOp(OpTest):
     def set_argument(self):
@@ -336,71 +301,6 @@ class TestMulticlassNMSOpNoOutput(TestMulticlassNMSOp):
         self.score_threshold = 2.0
 
 
-class TestMulticlassNMSLoDInput(OpTest):
-    def set_argument(self):
-        self.score_threshold = 0.01
-
-    def setUp(self):
-        self.set_argument()
-        M = 1200
-        C = 21
-        BOX_SIZE = 4
-        box_lod = [[1200]]
-        background = 0
-        nms_threshold = 0.3
-        nms_top_k = 400
-        keep_top_k = 200
-        score_threshold = self.score_threshold
-        normalized = False
-
-        scores = np.random.random((M, C)).astype('float32')
-
-        def softmax(x):
-            shiftx = x - np.max(x).clip(-64.)
-            exps = np.exp(shiftx)
-            return exps / np.sum(exps)
-
-        scores = np.apply_along_axis(softmax, 1, scores)
-
-        boxes = np.random.random((M, C, BOX_SIZE)).astype('float32')
-        boxes[:, :, 0] = boxes[:, :, 0] * 10
-        boxes[:, :, 1] = boxes[:, :, 1] * 10
-        boxes[:, :, 2] = boxes[:, :, 2] * 10 + 10
-        boxes[:, :, 3] = boxes[:, :, 3] * 10 + 10
-
-        nmsed_outs, lod = lod_multiclass_nms(
-            boxes, scores, background, score_threshold, nms_threshold,
-            nms_top_k, keep_top_k, box_lod, normalized)
-        nmsed_outs = [-1] if not nmsed_outs else nmsed_outs
-        nmsed_outs = np.array(nmsed_outs).astype('float32')
-        self.op_type = 'multiclass_nms'
-        self.inputs = {
-            'BBoxes': (boxes, box_lod),
-            'Scores': (scores, box_lod),
-        }
-        self.outputs = {'Out': (nmsed_outs, [lod])}
-        self.attrs = {
-            'background_label': 0,
-            'nms_threshold': nms_threshold,
-            'nms_top_k': nms_top_k,
-            'keep_top_k': keep_top_k,
-            'score_threshold': score_threshold,
-            'nms_eta': 1.0,
-            'normalized': normalized,
-        }
-
-    def test_check_output(self):
-        self.check_output(return_numpy=False)
-
-
-class TestIOU(unittest.TestCase):
-    def test_iou(self):
-        box1 = np.array([4.0, 3.0, 7.0, 5.0]).astype('float32')
-        box2 = np.array([3.0, 4.0, 6.0, 8.0]).astype('float32')
-
-        expt_output = np.array([2.0 / 16.0]).astype('float32')
-        calc_output = np.array([iou(box1, box2, True)]).astype('float32')
-        self.assertTrue(np.allclose(calc_output, expt_output))
 
 """
 if __name__ == '__main__':

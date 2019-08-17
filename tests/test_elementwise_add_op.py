@@ -16,7 +16,6 @@ import unittest
 import numpy as np
 from op_test import OpTest
 
-
 class TestElementwiseAddOp(OpTest):
     def setUp(self):
         self.attrs = {'axis': 2}
@@ -40,6 +39,21 @@ class TestElementwiseAddOpNegAxis(OpTest):
     def init(self):
         self.op_type = 'elementwise_add'
         self.attrs = {'axis': -1}
+
+class TestElementwiseAddO1(OpTest):
+    def init(self):
+        self.op_type = 'elementwise_add'
+    def setUp(self):
+        self.attrs = {'axis': 1}
+        self.init()
+
+        self.inputs = {
+            'X': np.random.random((1, 12, 19, 19)).astype(np.float32),
+            'Y': np.random.random((12)).astype(np.float32)
+        }
+        self.outputs = {'Out': np.zeros((1, 1))}
+    def test_check_output(self):
+        self.check_output()
 
 if __name__ == '__main__':
     unittest.main()
