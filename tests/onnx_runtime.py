@@ -12,13 +12,6 @@ with open("tests/inputs_test.pkl", "rb") as f:
 f.close()
 result = sess.run([], np_images)
 value_len = 0
-data_dict = {}
-for i in range(0, 10):
-    data_dict[i] = 0
-
-res = result[-1]
-
 with open("tests/outputs_test.pkl", "wb") as f:
     pickle.dump(res, f)
-f.close()
 
