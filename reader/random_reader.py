@@ -34,4 +34,6 @@ def image_classification_random_reader(program, feed_target_names):
             (b - a) * np.random.random(shape).astype("float32") + a
             for shape in input_shapes
         ]
+        print(len(inputs))
+        print(inputs[0].shape)
         yield inputs

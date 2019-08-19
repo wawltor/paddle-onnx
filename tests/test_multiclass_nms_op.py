@@ -248,60 +248,7 @@ class TestMulticlassNMSOp(OpTest):
         }
 
     def test_check_output(self):
-        #self.check_onnx_result(node_message=[core.VarDesc.VarType.INT64], fetch_targets=["Out@select_index"])
         self.check_output(return_numpy=False, is_nms=True)
-        #self.check_intermedidate_result(fetch_targets=[])
-"""
-class TestMulticlassNMSOp(OpTest):
-    def set_argument(self):
-        self.score_threshold = 0.01
 
-    def setUp(self):
-        self.set_argument()
-        background = 0
-        nms_threshold = 0.3
-        nms_top_k = 400
-        keep_top_k = 200
-        score_threshold = self.score_threshold
-        boxes = np.array([[[0.0, 0.0, 1.0, 1.0],
-                [0.0, 0.1, 1.0, 1.1],
-                [0.0, -0.1, 1.0, 0.9],
-                [0.0, 10.0, 1.0, 11.0],
-                [0.0, 10.1, 1.0, 11.1],
-                [0.0, 100.0, 1.0, 101.0]],
-                [[0.0, 0.0, 1.0, 1.0],
-                [0.0, 0.1, 1.0, 1.1],
-                [0.0, -0.1, 1.0, 0.9],
-                [0.0, 10.0, 1.0, 11.0],
-                [0.0, 10.1, 1.0, 11.1],
-                [0.0, 100.0, 1.0, 101.0]]]).astype(np.float32)
-        scores = np.array([[[0.9, 0.75, 0.6, 0.95, 0.5, 0.3]],
-                [[0.9, 0.75, 0.6, 0.95, 0.5, 0.3]]]).astype(np.float32)
-
-        self.op_type = 'multiclass_nms'
-        self.inputs = {'BBoxes': boxes, 'Scores': scores}
-        self.outputs = {'Out': (boxes, [1, 1])}
-        self.attrs = {
-            'background_label': 0,
-            'nms_threshold': nms_threshold,
-            'nms_top_k': nms_top_k,
-            'keep_top_k': keep_top_k,
-            'score_threshold': score_threshold,
-            'nms_eta': 1.0,
-            'normalized': True,
-        }
-
-    def test_check_output(self):
-        self.check_onnx_result(node_message=[core.VarDesc.VarType.INT64], fetch_targets=["Out@select_index"])
-        #self.check_output(return_numpy=False)
-class TestMulticlassNMSOpNoOutput(TestMulticlassNMSOp):
-    def set_argument(self):
-        # Here set 2.0 to test the case there is no outputs.
-        # In practical use, 0.0 < score_threshold < 1.0
-        self.score_threshold = 2.0
-
-
-
-"""
 if __name__ == '__main__':
     unittest.main()

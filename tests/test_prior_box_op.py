@@ -58,6 +58,10 @@ class TestPriorBoxOp(OpTest):
     def set_min_max_aspect_ratios_order(self):
         self.min_max_aspect_ratios_order = False
 
+    def set_step_height_width(self):
+        self.step_w = float(self.image_w) / float(self.layer_w)
+        self.step_h = float(self.image_h) / float(self.layer_h)
+
     def init_test_params(self):
         self.layer_w = 16
         self.layer_h = 16
@@ -65,8 +69,7 @@ class TestPriorBoxOp(OpTest):
         self.image_w = 20
         self.image_h = 20
 
-        self.step_w = float(self.image_w) / float(self.layer_w)
-        self.step_h = float(self.image_h) / float(self.layer_h)
+        self.set_step_height_width()
 
         self.input_channels = 2
         self.image_channels = 3
@@ -84,7 +87,7 @@ class TestPriorBoxOp(OpTest):
         self.variances = [0.1, 0.1, 0.2, 0.2]
         self.variances = np.array(self.variances, dtype=np.float).flatten()
 
-        self.clip = True
+        self.clip = True 
         self.num_priors = len(self.real_aspect_ratios) * len(self.min_sizes)
         if len(self.max_sizes) > 0:
             self.num_priors += len(self.max_sizes)
@@ -186,6 +189,10 @@ class TestPriorBoxOpWithSpecifiedOutOrder(TestPriorBoxOp):
     def set_min_max_aspect_ratios_order(self):
         self.min_max_aspect_ratios_order = True
 
+class TestPriorBoxOpWithStepWH(TestPriorBoxOp):
+    def set_step_height_width(self):
+        self.step_h = 0.0
+        self.step_w = 0.0
 
 if __name__ == '__main__':
     unittest.main()

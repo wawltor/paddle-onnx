@@ -390,11 +390,8 @@ def prior_box_op(operator, block):
     step_height = 1.0
 
     if step_w == 0.0 or step_h == 0.0:
-        step_width = float(img_width/feature_width)
-        step_height = float(img_height/feature_height)
-    else:
-        step_width = step_w 
-        step_height = step_h 
+        step_w = float(img_width/feature_width)
+        step_h = float(img_height/feature_height)
 
     num_priors = len(output_ratios) * len(min_sizes)
     if len(max_sizes) > 0:

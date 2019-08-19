@@ -31,7 +31,6 @@ def onnx_user_define_fetch_list(model, global_block, fetch_targets):
                               inputs=model.graph.input,
                               outputs=var_out) 
     onnx_model = helper.make_model(graph)
-    #onnx_model = shape_inference.infer_shapes(onnx_model)
 
     if len(onnx_model.graph.input) != len(model.graph.input):
         raise RuntimeError("Input mismatch {} != {}".format(

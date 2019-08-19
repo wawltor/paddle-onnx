@@ -125,11 +125,6 @@ def batch_norm_op(operator, block):
         'epsilon': attrs['epsilon'],
         'momentum': attrs['momentum']
     }
-    # In v1.0.1, need to set input(Mean) and input(Variance) to be consumed 
-    # explicitly. 
-    if __onnx_ver__ == '1.0.1':
-        kwargs['consumed_inputs'] = [0, 0, 0, 1, 1]
-
     bn_node = make_node(
         'BatchNormalization',
         inputs=reshaped_x + inputs['Scale'] + inputs['Bias'] + inputs['Mean'] +
@@ -273,7 +268,7 @@ def elementwise_ops(op_type, operator, block):
     inputs, attrs, outputs = op_io_info(operator)
     node_list = []
     Y_shape_name = inputs['Y']
-    if 'axis' in attrs:
+    if 'axis' in attrs and attrs['axis'] != -1:
         shape_x = block.vars[get_old_name(inputs['X'][0])].shape
         shape_y = block.vars[get_old_name(inputs['Y'][0])].shape
         rank_x = len(shape_x)
@@ -658,7 +653,7 @@ def reshape_op(operator, block):
             value=make_tensor(
                   name=shape_name,
                   data_type=TensorProto.INT64,
-                  dims=(len(attrs['shape']), ),
+                  dims=[len(attrs['shape'])],
                   vals=attrs['shape']))
         reshape_node = make_node('Reshape', inputs=[inputs['X'][0], shape_name], outputs=outputs['Out'])
         return (output_shape_node, reshape_node)
@@ -682,8 +677,11 @@ def slice_op():
 
 def softmax_op(operator, block):
     inputs, attrs, outputs = op_io_info(operator)
+    paddle_var = block.var(inputs["X"][0])
     axis = attrs['axis']
-    return make_node('Softmax', inputs=inputs['X'], outputs=outputs['Out'],axis=axis)
+    #if axis < 0:
+    #   axis = axis + len(paddle_var.shape)
+    return make_node('Softmax', inputs=inputs['X'], outputs=outputs['Out'], axis=axis)
 
 
 def spacetodepth_op():
@@ -739,7 +737,6 @@ def unsqueeze_op():
 
 def thresholded_relu_op(operator, block):
     inputs, attrs, outputs = op_io_info(operator)
-    print(attrs)
     return make_node(
         'ThresholdedRelu',
         inputs=inputs['X'],

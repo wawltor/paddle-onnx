@@ -13,5 +13,6 @@ f.close()
 result = sess.run([], np_images)
 value_len = 0
 with open("tests/outputs_test.pkl", "wb") as f:
-    pickle.dump(res, f)
+    pickle.dump(result, f)
+f.close()
 

@@ -83,6 +83,7 @@ class ImageDetectionReader():
         walk_list = os.walk(self.image_path)
         for path, list_dir, file_list in walk_list:
             for file_name in file_list:
+                outputs = []
                 file_path = os.path.join(path, file_name)
                 img = Image.open(file_path)
                 if img.mode == 'L':
@@ -99,7 +100,8 @@ class ImageDetectionReader():
                 img -= self._img_mean
                 img = img * 0.007843
                 img = np.expand_dims(img, axis=0)
-                img = list(img)
-                yield img
+                print(img.shape)
+                outputs.append(img)
+                yield outputs
 
 

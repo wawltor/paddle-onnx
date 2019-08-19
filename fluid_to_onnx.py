@@ -13,6 +13,7 @@
 # limitations under the License.
 # -*- coding:utf-8 -*-
 import os
+import sys 
 import argparse
 
 from fluid.utils import op_io_info, init_name_prefix
@@ -78,7 +79,6 @@ def convert(args):
             [inference_program, feed_target_names,
              fetch_targets] = fluid.io.load_inference_model(args.fluid_model, exe)
             
-        print(inference_program.to_string(True))
         fetch_targets_names = [ data.name for data in fetch_targets]
 
         feed_fetch_list = ["fetch", "feed"]
@@ -134,7 +134,7 @@ def convert(args):
                     if nms_first_index >=0:
                         _, _, output_op = op_io_info(op)
                         for output in output_op:
-                            nms_outputs.append(output_op[output])
+                            nms_outputs.extend(output_op[output])
                 else:
                     if op.type not in ['feed', 'fetch']:
                         op_check_list.append(op.type)
@@ -196,12 +196,13 @@ def convert(args):
                     debug_model(op_check_list, op_trackers, nms_outputs, args)
                     
 
-            except:
-                print("Invalid ONNX model saving path: %s" % args.onnx_model)
+            except Exception as e:
+                print(e)
+                print("Convert Failed! Please use the debug message to find error.")
+                sys.exit(-1)
 
 
 if __name__ == "__main__":
-    print("step in")
     args = parse_args()
     print_arguments(args)
     convert(args)

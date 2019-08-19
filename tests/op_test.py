@@ -184,7 +184,7 @@ class OpTest(unittest.TestCase):
                        fetch_list=self.fetch_list,
                        return_numpy=False)
 
-        outs = [ np.array(out) for out in outs]
+        outs = [np.array(out) for out in outs]
         return outs
 
     def eval_fluid_op(self, no_check_set, return_numpy):
@@ -365,6 +365,7 @@ class OpTest(unittest.TestCase):
         fluid_result = self.eval_fluid_op(no_check_set, return_numpy)
         if is_nms:
             onnx_result = self.check_onnx_with_onnxruntime()
+            onnx_result = onnx_result[0]
             onnx_result = np.squeeze(onnx_result, axis=0)
             fluid_result = fluid_result[0]
             fluid_result = fluid_result[(-fluid_result[:,1]).argsort()]
